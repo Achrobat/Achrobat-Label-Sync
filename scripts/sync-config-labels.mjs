@@ -1,39 +1,35 @@
-import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assert,
+  normalizeColor,
+  normalizeDescription,
+  normalizeName,
+  readJsonc,
+  writeJsoncPreservingHeader,
+} from "./lib/config-utils.mjs";
 
 const workspaceRoot = process.cwd();
-const labelsPath = path.join(workspaceRoot, "config", "labels.json");
-const deleteLabelsPath = path.join(workspaceRoot, "config", "delete-labels.json");
+const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
+const labelsPath = path.join(workspaceRoot, "config", "labels.jsonc");
+const autoPrunedLabelsPath = path.join(workspaceRoot, "config", "auto-pruned-labels.jsonc");
 
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
+function validateProperties(properties) {
+  assert(properties && typeof properties === "object" && !Array.isArray(properties), "config/properties.jsonc must contain an object.");
+
+  if (properties.sourceRepository !== undefined) {
+    assert(
+      typeof properties.sourceRepository === "string" && /^[^/\s]+\/[^/\s]+$/.test(properties.sourceRepository.trim()),
+      "properties.sourceRepository must match owner/repo when provided.",
+    );
   }
-}
 
-function normalizeColor(color) {
-  return color.replace(/^#/, "").toLowerCase();
-}
-
-function normalizeDescription(description) {
-  return description ?? "";
-}
-
-function normalizeName(name) {
-  return name.trim().toLowerCase();
-}
-
-async function readJson(filePath) {
-  const contents = await fs.readFile(filePath, "utf8");
-  return JSON.parse(contents);
-}
-
-async function writeJson(filePath, value) {
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  return {
+    sourceRepository: (properties.sourceRepository ?? process.env.GITHUB_REPOSITORY ?? "").trim(),
+  };
 }
 
 function validateDeleteLabels(deleteLabels) {
-  assert(Array.isArray(deleteLabels), "config/delete-labels.json must contain an array.");
+  assert(Array.isArray(deleteLabels), "config/auto-pruned-labels.jsonc must contain an array.");
 
   const seen = new Set();
 
@@ -99,17 +95,18 @@ async function main() {
   const token = process.env.CONFIG_LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
   assert(token, "CONFIG_LABEL_SYNC_TOKEN or GITHUB_TOKEN is required.");
 
-  const repository = process.env.SOURCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY;
+  const properties = validateProperties(await readJsonc(propertiesPath));
+  const repository = process.env.SOURCE_REPOSITORY ?? properties.sourceRepository;
   assert(repository, "SOURCE_REPOSITORY or GITHUB_REPOSITORY is required.");
 
-  const deleteLabels = validateDeleteLabels(await readJson(deleteLabelsPath));
+  const deleteLabels = validateDeleteLabels(await readJsonc(autoPrunedLabelsPath));
   const repositoryLabels = await getAllLabels(token, repository);
   const managedLabels = toManagedLabels(repositoryLabels, deleteLabels);
 
-  await writeJson(labelsPath, managedLabels);
+  await writeJsoncPreservingHeader(labelsPath, managedLabels);
 
   console.log(
-    `Synced ${managedLabels.length} managed labels from ${repository} into config/labels.json after excluding ${deleteLabels.size} auto-delete labels.`,
+    `Synced ${managedLabels.length} managed labels from ${repository} into config/labels.jsonc after excluding ${deleteLabels.size} auto-pruned labels.`,
   );
 }
 

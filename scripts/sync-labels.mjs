@@ -1,10 +1,18 @@
-import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assert,
+  normalizeColor,
+  normalizeDescription,
+  normalizeName,
+  normalizeRepositoryRef,
+  readJsonc,
+} from "./lib/config-utils.mjs";
 
 const workspaceRoot = process.cwd();
-const labelsPath = path.join(workspaceRoot, "config", "labels.json");
-const deleteLabelsPath = path.join(workspaceRoot, "config", "delete-labels.json");
-const repositoriesPath = path.join(workspaceRoot, "config", "repositories.json");
+const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
+const labelsPath = path.join(workspaceRoot, "config", "labels.jsonc");
+const autoPrunedLabelsPath = path.join(workspaceRoot, "config", "auto-pruned-labels.jsonc");
+const blacklistedRepositoriesPath = path.join(workspaceRoot, "config", "blacklisted-repositories.jsonc");
 
 const validateOnly = process.argv.includes("--validate-only");
 const dryRun = validateOnly || process.env.DRY_RUN === "true";
@@ -32,22 +40,6 @@ function parseRepositoryFilter(value) {
   );
 }
 
-function normalizeRepositoryRef(value) {
-  return value.trim().toLowerCase();
-}
-
-function normalizeColor(color) {
-  return color.replace(/^#/, "").toLowerCase();
-}
-
-function normalizeDescription(description) {
-  return description ?? "";
-}
-
-function normalizeName(name) {
-  return name.trim().toLowerCase();
-}
-
 function isFullRepositoryName(value) {
   return /^[^/\s]+\/[^/\s]+$/.test(value);
 }
@@ -56,19 +48,38 @@ function isRepositoryName(value) {
   return /^[^/\s]+$/.test(value);
 }
 
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
+function validateProperties(properties) {
+  assert(properties && typeof properties === "object" && !Array.isArray(properties), "config/properties.jsonc must contain an object.");
+  assert(
+    typeof properties.organization === "string" && properties.organization.trim(),
+    "properties.organization must be a non-empty string.",
+  );
+  assert(
+    typeof properties.labelSyncTokenSecretName === "string" && /^[A-Z_][A-Z0-9_]*$/.test(properties.labelSyncTokenSecretName),
+    "properties.labelSyncTokenSecretName must look like a GitHub secret name.",
+  );
 
-async function readJson(filePath) {
-  const contents = await fs.readFile(filePath, "utf8");
-  return JSON.parse(contents);
+  if (properties.sourceRepository !== undefined) {
+    assert(
+      typeof properties.sourceRepository === "string" && /^[^/\s]+\/[^/\s]+$/.test(properties.sourceRepository.trim()),
+      "properties.sourceRepository must match owner/repo when provided.",
+    );
+  }
+
+  if (properties.deleteMissingByDefault !== undefined) {
+    assert(typeof properties.deleteMissingByDefault === "boolean", "properties.deleteMissingByDefault must be a boolean.");
+  }
+
+  return {
+    organization: properties.organization.trim(),
+    labelSyncTokenSecretName: properties.labelSyncTokenSecretName.trim(),
+    sourceRepository: (properties.sourceRepository ?? "").trim(),
+    deleteMissingByDefault: properties.deleteMissingByDefault ?? false,
+  };
 }
 
 function validateLabels(labels) {
-  assert(Array.isArray(labels), "config/labels.json must contain an array.");
+  assert(Array.isArray(labels), "config/labels.jsonc must contain an array.");
 
   const seen = new Set();
 
@@ -94,7 +105,7 @@ function validateLabels(labels) {
 }
 
 function validateDeleteLabels(deleteLabels) {
-  assert(Array.isArray(deleteLabels), "config/delete-labels.json must contain an array.");
+  assert(Array.isArray(deleteLabels), "config/auto-pruned-labels.jsonc must contain an array.");
 
   const seen = new Set();
 
@@ -115,22 +126,14 @@ function assertNoLabelOverlap(desiredLabels, deleteLabels) {
 
   assert(
     overlaps.length === 0,
-    `Labels cannot exist in both config/labels.json and config/delete-labels.json: ${overlaps.join(", ")}.`,
+    `Labels cannot exist in both config/labels.jsonc and config/auto-pruned-labels.jsonc: ${overlaps.join(", ")}.`,
   );
 }
 
-function validateRepositories(config) {
-  assert(config && typeof config === "object" && !Array.isArray(config), "config/repositories.json must contain an object.");
-
-  if (config.deleteMissing !== undefined) {
-    assert(typeof config.deleteMissing === "boolean", "repositories.deleteMissing must be a boolean.");
-  }
-
-  const blacklist = config.blacklist ?? [];
-  assert(Array.isArray(blacklist), "repositories.blacklist must be an array.");
-
+function validateBlacklistedRepositories(blacklist) {
+  assert(Array.isArray(blacklist), "config/blacklisted-repositories.jsonc must contain an array.");
   const seen = new Set();
-  const normalizedBlacklist = blacklist.map((entry, index) => {
+  return new Set(blacklist.map((entry, index) => {
     assert(typeof entry === "string" && entry.trim(), `Blacklist entry at index ${index} must be a non-empty string.`);
 
     const name = entry.trim();
@@ -143,12 +146,7 @@ function validateRepositories(config) {
     assert(!seen.has(key), `Duplicate blacklist entry detected: "${name}".`);
     seen.add(key);
     return key;
-  });
-
-  return {
-    deleteMissing: config.deleteMissing ?? false,
-    blacklist: new Set(normalizedBlacklist),
-  };
+  }));
 }
 
 async function githubRequest(token, method, apiPath, body) {
@@ -358,13 +356,14 @@ async function syncRepository(token, repository, desiredLabels, deleteLabels, de
 }
 
 async function main() {
-  const labels = validateLabels(await readJson(labelsPath));
-  const deleteLabels = validateDeleteLabels(await readJson(deleteLabelsPath));
+  const properties = validateProperties(await readJsonc(propertiesPath));
+  const labels = validateLabels(await readJsonc(labelsPath));
+  const deleteLabels = validateDeleteLabels(await readJsonc(autoPrunedLabelsPath));
   assertNoLabelOverlap(labels, deleteLabels);
-  const repositoryConfig = validateRepositories(await readJson(repositoriesPath));
+  const blacklistedRepositories = validateBlacklistedRepositories(await readJsonc(blacklistedRepositoriesPath));
 
   console.log(
-    `Loaded ${labels.length} managed labels, ${deleteLabels.length} auto-delete labels, and ${repositoryConfig.blacklist.size} blacklist entries.`,
+    `Loaded ${labels.length} managed labels, ${deleteLabels.length} auto-pruned labels, and ${blacklistedRepositories.size} blacklisted repositories.`,
   );
 
   if (validateOnly) {
@@ -374,12 +373,12 @@ async function main() {
 
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
-  const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER;
-  assert(orgName, "ORG_NAME or GITHUB_REPOSITORY_OWNER is required to discover organization repositories.");
+  const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
+  assert(orgName, "ORG_NAME, GITHUB_REPOSITORY_OWNER, or properties.organization is required to discover organization repositories.");
 
   const discoveredRepositories = await getOrganizationRepositories(token, orgName);
   const repositories = applyTargetRepositoryFilter(
-    filterRepositories(discoveredRepositories, orgName, repositoryConfig.blacklist),
+    filterRepositories(discoveredRepositories, orgName, blacklistedRepositories),
   );
 
   console.log(
@@ -392,7 +391,7 @@ async function main() {
   }
 
   console.log(dryRun ? "Running in dry-run mode." : "Applying changes.");
-  const deleteMissing = deleteMissingOverride ?? repositoryConfig.deleteMissing;
+  const deleteMissing = deleteMissingOverride ?? properties.deleteMissingByDefault;
 
   for (const repository of repositories) {
     await syncRepository(token, repository, labels, deleteLabels, deleteMissing);

@@ -41,13 +41,19 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Load properties
+        id: properties
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/export-properties.mjs
+
       - name: Validate updated config
         run: node scripts/sync-labels.mjs --validate-only
 
       - name: Sync labels across the organization
         env:
-          LABEL_SYNC_TOKEN: ${{ secrets.LABEL_SYNC_TOKEN }}
-          ORG_NAME: ${{ github.repository_owner }}
+          LABEL_SYNC_TOKEN: ${{ secrets[steps.properties.outputs.label_sync_token_secret_name] }}
+          ORG_NAME: ${{ steps.properties.outputs.organization }}
           DRY_RUN: ${{ inputs.dry_run }}
           DELETE_MISSING: ${{ inputs.delete_missing }}
           TARGET_REPOSITORIES: ${{ inputs.repositories }}

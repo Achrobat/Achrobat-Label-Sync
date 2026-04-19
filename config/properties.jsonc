@@ -1,0 +1,13 @@
+// Example:
+// {
+//   "organization": "your-org-name",
+//   "labelSyncTokenSecretName": "LABEL_SYNC_TOKEN",
+//   "sourceRepository": "your-org-name/label-sync",
+//   "deleteMissingByDefault": false
+// }
+{
+  "organization": "UltraProdigy",
+  "labelSyncTokenSecretName": "LABEL_SYNC_TOKEN",
+  "sourceRepository": "UltraProdigy/Label-Sync",
+  "deleteMissingByDefault": false
+}

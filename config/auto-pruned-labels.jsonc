@@ -1,3 +1,9 @@
+// Example:
+// [
+//   "bug",
+//   "documentation",
+//   "duplicate"
+// ]
 [
   "bug",
   "documentation",

@@ -1,0 +1,14 @@
+// Example:
+// [
+//   {
+//     "name": "priority: high",
+//     "color": "b60205",
+//     "description": "Top-priority work"
+//   },
+//   {
+//     "name": "status: blocked",
+//     "color": "fbca04",
+//     "description": "Waiting on something external"
+//   }
+// ]
+[]
