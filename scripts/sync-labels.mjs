@@ -12,7 +12,7 @@ const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
 const labelsPath = path.join(workspaceRoot, "config", "labels.jsonc");
 const autoPrunedLabelsPath = path.join(workspaceRoot, "config", "auto-pruned-labels.jsonc");
-const blacklistedRepositoriesPath = path.join(workspaceRoot, "config", "blacklisted-repositories.jsonc");
+const repositoryFilterPath = path.join(workspaceRoot, "config", "repository-filter.jsonc");
 
 const validateOnly = process.argv.includes("--validate-only");
 const dryRun = validateOnly || process.env.DRY_RUN === "true";
@@ -130,23 +130,40 @@ function assertNoLabelOverlap(desiredLabels, deleteLabels) {
   );
 }
 
-function validateBlacklistedRepositories(blacklist) {
-  assert(Array.isArray(blacklist), "config/blacklisted-repositories.jsonc must contain an array.");
+function validateRepositoryEntries(entries, configKey) {
+  assert(Array.isArray(entries), `config/repository-filter.jsonc field "${configKey}" must contain an array.`);
   const seen = new Set();
-  return new Set(blacklist.map((entry, index) => {
-    assert(typeof entry === "string" && entry.trim(), `Blacklist entry at index ${index} must be a non-empty string.`);
+  return new Set(entries.map((entry, index) => {
+    assert(typeof entry === "string" && entry.trim(), `"${configKey}" entry at index ${index} must be a non-empty string.`);
 
     const name = entry.trim();
     assert(
       isRepositoryName(name) || isFullRepositoryName(name),
-      `Blacklist entry "${name}" must be either "repo-name" or "owner/repo-name".`,
+      `"${configKey}" entry "${name}" must be either "repo-name" or "owner/repo-name".`,
     );
 
     const key = normalizeRepositoryRef(name);
-    assert(!seen.has(key), `Duplicate blacklist entry detected: "${name}".`);
+    assert(!seen.has(key), `Duplicate "${configKey}" entry detected: "${name}".`);
     seen.add(key);
     return key;
   }));
+}
+
+function validateRepositoryFilter(repositoryFilter) {
+  assert(
+    repositoryFilter && typeof repositoryFilter === "object" && !Array.isArray(repositoryFilter),
+    "config/repository-filter.jsonc must contain an object.",
+  );
+
+  if (repositoryFilter.useWhitelist !== undefined) {
+    assert(typeof repositoryFilter.useWhitelist === "boolean", 'config/repository-filter.jsonc field "useWhitelist" must be a boolean.');
+  }
+
+  return {
+    useWhitelist: repositoryFilter.useWhitelist ?? false,
+    whitelist: validateRepositoryEntries(repositoryFilter.whitelist ?? [], "whitelist"),
+    blacklist: validateRepositoryEntries(repositoryFilter.blacklist ?? [], "blacklist"),
+  };
 }
 
 async function githubRequest(token, method, apiPath, body) {
@@ -210,14 +227,21 @@ async function getOrganizationRepositories(token, orgName) {
   }
 }
 
-function filterRepositories(repositories, orgName, blacklist) {
+function filterRepositories(repositories, orgName, repositoryFilter) {
   return repositories
     .filter((repository) => {
       const shortName = normalizeRepositoryRef(repository.name);
       const fullName = normalizeRepositoryRef(repository.full_name);
       const orgScopedName = normalizeRepositoryRef(`${orgName}/${repository.name}`);
+      const matchesFilter = (entries) => (
+        entries.has(shortName) || entries.has(fullName) || entries.has(orgScopedName)
+      );
 
-      return !blacklist.has(shortName) && !blacklist.has(fullName) && !blacklist.has(orgScopedName);
+      if (repositoryFilter.useWhitelist) {
+        return matchesFilter(repositoryFilter.whitelist);
+      }
+
+      return !matchesFilter(repositoryFilter.blacklist);
     })
     .sort((left, right) => left.full_name.localeCompare(right.full_name));
 }
@@ -243,7 +267,7 @@ function applyTargetRepositoryFilter(repositories) {
 
   assert(
     missing.length === 0,
-    `Requested repositories were not found in the discovered org repository set after blacklist filtering: ${missing.join(", ")}.`,
+    `Requested repositories were not found in the discovered org repository set after repository-filter processing: ${missing.join(", ")}.`,
   );
 
   return selected;
@@ -360,10 +384,12 @@ async function main() {
   const labels = validateLabels(await readJsonc(labelsPath));
   const deleteLabels = validateDeleteLabels(await readJsonc(autoPrunedLabelsPath));
   assertNoLabelOverlap(labels, deleteLabels);
-  const blacklistedRepositories = validateBlacklistedRepositories(await readJsonc(blacklistedRepositoriesPath));
+  const repositoryFilter = validateRepositoryFilter(await readJsonc(repositoryFilterPath));
+  const activeFilterCount = repositoryFilter.useWhitelist ? repositoryFilter.whitelist.size : repositoryFilter.blacklist.size;
+  const activeFilterMode = repositoryFilter.useWhitelist ? "whitelist" : "blacklist";
 
   console.log(
-    `Loaded ${labels.length} managed labels, ${deleteLabels.length} auto-pruned labels, and ${blacklistedRepositories.size} blacklisted repositories.`,
+    `Loaded ${labels.length} managed labels, ${deleteLabels.length} auto-pruned labels, and ${activeFilterCount} active repository filter entries from config/repository-filter.jsonc (mode=${activeFilterMode}).`,
   );
 
   if (validateOnly) {
@@ -378,15 +404,15 @@ async function main() {
 
   const discoveredRepositories = await getOrganizationRepositories(token, orgName);
   const repositories = applyTargetRepositoryFilter(
-    filterRepositories(discoveredRepositories, orgName, blacklistedRepositories),
+    filterRepositories(discoveredRepositories, orgName, repositoryFilter),
   );
 
   console.log(
-    `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${repositories.length} remain after blacklist filtering.`,
+    `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${repositories.length} remain after repository-filter processing.`,
   );
 
   if (repositories.length === 0) {
-    console.log("No repositories remain after blacklist and optional subset filtering. Nothing to sync.");
+    console.log("No repositories remain after repository-filter processing and optional subset filtering. Nothing to sync.");
     return;
   }
 

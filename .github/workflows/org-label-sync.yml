@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       repositories:
-        description: "Optional comma-separated subset of discovered repositories"
+        description: "Optional comma-separated subset of repositories after repository-filter rules are applied"
         required: false
         type: string
 

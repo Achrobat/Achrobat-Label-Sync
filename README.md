@@ -36,9 +36,9 @@ The normal flow is:
 |       `-- validate-configs.yml
 |-- config/
 |   |-- auto-pruned-labels.jsonc
-|   |-- blacklisted-repositories.jsonc
 |   |-- labels.jsonc
-|   `-- properties.jsonc
+|   |-- properties.jsonc
+|   `-- repository-filter.jsonc
 `-- scripts/
     |-- export-properties.mjs
     |-- sync-config-labels.mjs
@@ -115,13 +115,19 @@ The starter file is prefilled with GitHub's default labels:
 
 If any of those labels exist on this repo, `Config-Label_Sync` excludes them from `labels.jsonc`. If they exist on target repos, `Org-Label-Sync` deletes them.
 
-### `config/blacklisted-repositories.jsonc`
+### `config/repository-filter.jsonc`
 
-This is the repo blacklist for org sync.
+This controls which repositories `Org-Label-Sync` will target.
 
-By default, `Org-Label-Sync` targets every repo in the configured organization. Any repo listed here is skipped.
+The file uses:
 
-Entries can be either:
+- `useWhitelist`: when `true`, only repositories in `whitelist` are synced; when `false`, all discovered org repositories are synced except those in `blacklist`
+- `whitelist`: repos to include when whitelist mode is enabled
+- `blacklist`: repos to exclude when whitelist mode is disabled
+
+`useWhitelist` defaults to `false`, so blacklist mode is the default behavior.
+
+Entries in either list can be either:
 
 - `repo-name`
 - `owner/repo-name`
@@ -129,10 +135,17 @@ Entries can be either:
 Example:
 
 ```jsonc
-[
-  "sandbox-repo",
-  "your-org-name/private-internal-tools"
-]
+{
+  "useWhitelist": false,
+  "whitelist": [
+    "sandbox-repo",
+    "your-org-name/important-repo"
+  ],
+  "blacklist": [
+    "do-not-touch",
+    "your-org-name/private-internal-tools"
+  ]
+}
 ```
 
 ## Workflows
@@ -176,7 +189,8 @@ Validation includes:
 - JSONC parsing
 - required property checks
 - duplicate label detection
-- duplicate blacklist detection
+- repository filter shape and `useWhitelist` validation
+- duplicate whitelist and blacklist detection
 - invalid colors
 - invalid repo names
 - overlap detection between `labels.jsonc` and `auto-pruned-labels.jsonc`
@@ -193,7 +207,7 @@ Inputs:
 
 - `dry_run`: preview changes without writing them
 - `delete_missing`: override `deleteMissingByDefault` for the run
-- `repositories`: optional comma-separated subset of discovered repositories
+- `repositories`: optional comma-separated subset of repositories after `repository-filter.jsonc` is applied
 
 What it does:
 
@@ -202,7 +216,7 @@ What it does:
 3. Loads shared settings from `config/properties.jsonc`
 4. Validates the updated config
 5. Discovers repos in the configured organization
-6. Skips repos in `config/blacklisted-repositories.jsonc`
+6. Applies `config/repository-filter.jsonc`
 7. Creates or updates labels from `config/labels.jsonc`
 8. Deletes labels listed in `config/auto-pruned-labels.jsonc`
 9. Optionally deletes any other unmanaged labels if `delete_missing` or `deleteMissingByDefault` is enabled
@@ -224,7 +238,7 @@ That token needs enough access to:
 2. Create the sync token secret in the repo.
 3. Update `config/properties.jsonc` for your org and repo.
 4. Adjust `config/auto-pruned-labels.jsonc` if you want a different always-delete list.
-5. Add any excluded repos to `config/blacklisted-repositories.jsonc`.
+5. Configure `config/repository-filter.jsonc` for blacklist mode or whitelist mode.
 6. Set the labels on this repository to the label set you want to manage.
 7. Run `Config-Label_Sync` once if you want to populate `config/labels.jsonc` immediately.
 8. Run `Org-Label-Sync` to propagate the labels across the organization.
@@ -232,6 +246,6 @@ That token needs enough access to:
 ## Safe Defaults
 
 - `labels.jsonc` starts empty until you define or sync labels on this repo
-- all repos in the org are targeted unless blacklisted
+- all repos in the org are targeted unless excluded by `repository-filter.jsonc`
 - GitHub default labels are auto-pruned by default
 - deleting unmanaged labels is off by default unless you enable it

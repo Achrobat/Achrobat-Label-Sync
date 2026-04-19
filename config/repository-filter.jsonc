@@ -1,0 +1,17 @@
+// Set to true to sync only the repositories listed in "whitelist".
+// Set to false to sync every discovered org repository except those listed in "blacklist".
+{
+  "useWhitelist": false,
+
+  // Used only when "useWhitelist" is true.
+  "whitelist": [
+    // "sandbox-repo",
+    // "your-org-name/important-repo"
+  ],
+
+  // Used only when "useWhitelist" is false.
+  "blacklist": [
+    // "do-not-touch",
+    // "your-org-name/private-internal-tools"
+  ]
+}
