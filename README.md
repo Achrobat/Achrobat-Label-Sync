@@ -236,9 +236,9 @@ Trigger:
 Inputs:
 
 - `run_on_issues`: remove the label from matching issues
-- `closed_only`: when `run_on_issues` is enabled, only target closed issues
+- `target_only_closed_issues`: when `run_on_issues` is enabled, only target closed issues
 - `run_on_pull_requests`: remove the label from matching pull requests
-- `merged_only`: when `run_on_pull_requests` is enabled, only target merged pull requests
+- `target_only_closed_pull_requests`: when `run_on_pull_requests` is enabled, only target closed pull requests
 - `label_name`: exact label name to remove
 
 What it does:
@@ -252,7 +252,7 @@ What it does:
 
 Notes:
 
-- GitHub Actions does not currently support conditionally hiding or nesting `workflow_dispatch` inputs, so `closed_only` and `merged_only` can be described as dependent toggles but not visually tucked under their parent checkboxes.
+- GitHub Actions does not currently support conditionally hiding or nesting `workflow_dispatch` inputs, so the closed-only toggles can be described as dependent but not visually tucked under their parent checkboxes.
 
 ## Token Requirements
 

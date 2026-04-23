@@ -4,27 +4,27 @@ on:
   workflow_dispatch:
     inputs:
       run_on_issues:
-        description: "Remove the label from issues in the configured repository set"
+        description: "Remove from Issues"
         required: true
         type: boolean
         default: true
-      closed_only:
-        description: "When Run on Issues is enabled, only target closed issues"
+      target_only_closed_issues:
+        description: "Target Only Closed Issues"
         required: true
         type: boolean
         default: false
       run_on_pull_requests:
-        description: "Remove the label from pull requests in the configured repository set"
+        description: "Remove from Pull Requests"
         required: true
         type: boolean
         default: false
-      merged_only:
-        description: "When Run on Pull Requests is enabled, only target merged pull requests"
+      target_only_closed_pull_requests:
+        description: "Target Only Closed Pull Requests"
         required: true
         type: boolean
         default: false
       label_name:
-        description: "Exact label name to remove"
+        description: "Exact Name of Label:"
         required: true
         type: string
 
@@ -59,8 +59,8 @@ jobs:
         env:
           LABEL_SYNC_TOKEN: ${{ secrets[steps.properties.outputs.label_sync_token_secret_name] }}
           RUN_ON_ISSUES: ${{ inputs.run_on_issues }}
-          CLOSED_ONLY: ${{ inputs.closed_only }}
+          TARGET_ONLY_CLOSED_ISSUES: ${{ inputs.target_only_closed_issues }}
           RUN_ON_PULL_REQUESTS: ${{ inputs.run_on_pull_requests }}
-          MERGED_ONLY: ${{ inputs.merged_only }}
+          TARGET_ONLY_CLOSED_PULL_REQUESTS: ${{ inputs.target_only_closed_pull_requests }}
           LABEL_NAME: ${{ inputs.label_name }}
         run: node scripts/remove-labels.mjs

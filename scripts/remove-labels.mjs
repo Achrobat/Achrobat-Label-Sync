@@ -7,9 +7,9 @@ const repositoryFilterPath = path.join(workspaceRoot, "config", "repository-filt
 
 const validateOnly = process.argv.includes("--validate-only");
 const runOnIssues = parseBoolean(process.env.RUN_ON_ISSUES);
-const closedOnly = parseBoolean(process.env.CLOSED_ONLY) ?? false;
+const targetOnlyClosedIssues = parseBoolean(process.env.TARGET_ONLY_CLOSED_ISSUES) ?? false;
 const runOnPullRequests = parseBoolean(process.env.RUN_ON_PULL_REQUESTS);
-const mergedOnly = parseBoolean(process.env.MERGED_ONLY) ?? false;
+const targetOnlyClosedPullRequests = parseBoolean(process.env.TARGET_ONLY_CLOSED_PULL_REQUESTS) ?? false;
 const labelName = (process.env.LABEL_NAME ?? "").trim();
 
 function parseBoolean(value) {
@@ -182,10 +182,6 @@ function findMatchingLabel(issueOrPullRequest, requestedLabel) {
   return labels.find((label) => label && typeof label.name === "string" && normalizeName(label.name) === requestedKey) ?? null;
 }
 
-async function getPullRequestDetails(token, repositoryFullName, number) {
-  return githubRequest(token, "GET", `/repos/${repositoryFullName}/pulls/${number}`);
-}
-
 async function removeLabelFromIssue(token, repositoryFullName, number, actualLabelName) {
   await githubRequest(
     token,
@@ -195,7 +191,7 @@ async function removeLabelFromIssue(token, repositoryFullName, number, actualLab
 }
 
 async function processIssues(token, repository, requestedLabel) {
-  const state = closedOnly ? "closed" : "all";
+  const state = targetOnlyClosedIssues ? "closed" : "all";
   const candidates = await getLabelledIssues(token, repository.full_name, state, requestedLabel);
   const issues = candidates.filter((item) => !item.pull_request);
   let removed = 0;
@@ -216,7 +212,7 @@ async function processIssues(token, repository, requestedLabel) {
 }
 
 async function processPullRequests(token, repository, requestedLabel) {
-  const state = mergedOnly ? "closed" : "all";
+  const state = targetOnlyClosedPullRequests ? "closed" : "all";
   const candidates = await getLabelledIssues(token, repository.full_name, state, requestedLabel);
   const pullRequests = candidates.filter((item) => item.pull_request);
   let removed = 0;
@@ -226,14 +222,6 @@ async function processPullRequests(token, repository, requestedLabel) {
 
     if (!matchingLabel) {
       continue;
-    }
-
-    if (mergedOnly) {
-      const details = await getPullRequestDetails(token, repository.full_name, pullRequest.number);
-
-      if (!details.merged_at) {
-        continue;
-      }
     }
 
     await removeLabelFromIssue(token, repository.full_name, pullRequest.number, matchingLabel.name);
