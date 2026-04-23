@@ -7,14 +7,16 @@ Its job is to:
 - keep this repo's label config in sync with the labels currently defined on the repo
 - validate config changes automatically
 - sync the resulting label set across the rest of the organization
+- remove an exact label from issues and pull requests across the filtered repository set
 
 ## How It Works
 
-This repo uses three workflows:
+This repo uses four workflows:
 
 1. `Config-Label_Sync`
 2. `Validate-Configs`
 3. `Org-Label-Sync`
+4. `remove-labels`
 
 The normal flow is:
 
@@ -33,6 +35,7 @@ The normal flow is:
 |   `-- workflows/
 |       |-- config-label-sync.yml
 |       |-- org-label-sync.yml
+|       |-- remove-labels.yml
 |       `-- validate-configs.yml
 |-- config/
 |   |-- auto-pruned-labels.jsonc
@@ -194,6 +197,7 @@ Validation includes:
 - invalid colors
 - invalid repo names
 - overlap detection between `labels.jsonc` and `auto-pruned-labels.jsonc`
+- validation for the shared config used by `remove-labels`
 
 ### `Org-Label-Sync`
 
@@ -220,6 +224,35 @@ What it does:
 7. Creates or updates labels from `config/labels.jsonc`
 8. Deletes labels listed in `config/auto-pruned-labels.jsonc`
 9. Optionally deletes any other unmanaged labels if `delete_missing` or `deleteMissingByDefault` is enabled
+
+### `remove-labels`
+
+File: `.github/workflows/remove-labels.yml`
+
+Trigger:
+
+- manual via `workflow_dispatch`
+
+Inputs:
+
+- `run_on_issues`: remove the label from matching issues
+- `closed_only`: when `run_on_issues` is enabled, only target closed issues
+- `run_on_pull_requests`: remove the label from matching pull requests
+- `merged_only`: when `run_on_pull_requests` is enabled, only target merged pull requests
+- `label_name`: exact label name to remove
+
+What it does:
+
+1. Checks out the latest default branch
+2. Loads the org name and token secret name from `config/properties.jsonc`
+3. Validates the shared config inputs used for repo discovery
+4. Discovers repositories in the configured organization
+5. Applies `config/repository-filter.jsonc` in whitelist or blacklist mode
+6. Removes the exact label from the selected issues and/or pull requests in every remaining repository
+
+Notes:
+
+- GitHub Actions does not currently support conditionally hiding or nesting `workflow_dispatch` inputs, so `closed_only` and `merged_only` can be described as dependent toggles but not visually tucked under their parent checkboxes.
 
 ## Token Requirements
 

@@ -23,3 +23,6 @@ jobs:
 
       - name: Validate label sync configuration
         run: node scripts/sync-labels.mjs --validate-only
+
+      - name: Validate remove-labels configuration
+        run: node scripts/remove-labels.mjs --validate-only
