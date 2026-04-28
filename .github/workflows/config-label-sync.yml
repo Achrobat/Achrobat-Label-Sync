@@ -28,15 +28,30 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node scripts/export-properties.mjs
 
+      - name: Resolve PAT auth token
+        id: pat_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'pat' }}
+        env:
+          AUTH_MODE: pat
+          PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Resolve GitHub App auth token
+        id: app_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'githubApp' }}
+        env:
+          AUTH_MODE: githubApp
+          GITHUB_APP_ID: ${{ secrets[steps.properties.outputs.github_app_id_secret_name] }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets[steps.properties.outputs.github_app_private_key_secret_name] }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
       - name: Sync current repo labels into config
         env:
-          CONFIG_LABEL_SYNC_TOKEN: ${{ secrets[steps.properties.outputs.label_sync_token_secret_name] }}
           SOURCE_REPOSITORY: ${{ steps.properties.outputs.source_repository }}
         run: node scripts/sync-config-labels.mjs
 
       - name: Commit config updates
-        env:
-          PUSH_TOKEN: ${{ secrets[steps.properties.outputs.label_sync_token_secret_name] }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

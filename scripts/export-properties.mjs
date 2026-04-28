@@ -23,7 +23,12 @@ async function main() {
 
   const lines = [
     `organization=${properties.organization}`,
+    `auth_mode=${properties.authMode}`,
     `label_sync_token_secret_name=${properties.labelSyncTokenSecretName}`,
+    `pat_token_secret_name=${properties.labelSyncTokenSecretName}`,
+    `github_app_id_secret_name=${properties.githubAppIdSecretName}`,
+    `github_app_private_key_secret_name=${properties.githubAppPrivateKeySecretName}`,
+    `github_app_installation_id_secret_name=${properties.githubAppInstallationIdSecretName}`,
     `source_repository=${properties.sourceRepository}`,
     `delete_missing_by_default=${properties.deleteMissingByDefault}`,
   ];

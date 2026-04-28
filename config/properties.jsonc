@@ -1,13 +1,37 @@
 // Example:
 // {
 //   "organization": "your-org-name",
-//   "labelSyncTokenSecretName": "LABEL_SYNC_TOKEN",
+//   "authentication": {
+//     "mode": "pat",
+//     "pat": {
+//       "tokenSecretName": "LABEL_SYNC_TOKEN"
+//     },
+//     "githubApp": {
+//       "appIdSecretName": "LABEL_SYNC_APP_ID",
+//       "privateKeySecretName": "LABEL_SYNC_APP_PRIVATE_KEY",
+//       "installationIdSecretName": "LABEL_SYNC_APP_INSTALLATION_ID"
+//     }
+//   },
 //   "sourceRepository": "your-org-name/label-sync",
 //   "deleteMissingByDefault": false
 // }
 {
   "organization": "UltraProdigy",
-  "labelSyncTokenSecretName": "LABEL_SYNC_TOKEN",
+  "authentication": {
+    "mode": "pat",
+    "pat": {
+      # This is the name of the secret that contains the GitHub PAT token. You should create this secret in your repository and set its value to a valid PAT token with appropriate permissions.
+      "tokenSecretName": "LABEL_SYNC_TOKEN"
+    },
+    "githubApp": {
+      # This is the name of the secret that contains the GitHub App ID. You should create this secret in your repository and set its value to a valid GitHub App ID.
+      "appIdSecretName": "LABEL_SYNC_APP_ID",
+      # This is the name of the secret that contains the GitHub App private key. You should create this secret in your repository and set its value to the private key of your GitHub App.
+      "privateKeySecretName": "LABEL_SYNC_APP_PRIVATE_KEY",
+      # This is the name of the secret that contains the GitHub App installation ID. You should create this secret in your repository and set its value to the installation ID of your GitHub App.
+      "installationIdSecretName": "LABEL_SYNC_APP_INSTALLATION_ID"
+    }
+  },
   "sourceRepository": "UltraProdigy/Label-Sync",
   "deleteMissingByDefault": false
 }

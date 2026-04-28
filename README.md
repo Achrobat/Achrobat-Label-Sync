@@ -57,6 +57,7 @@ The reverse flow is:
 |       `-- workflow-run-changelog.md
 `-- scripts/
     |-- export-properties.mjs
+    |-- create-github-auth-token.mjs
     |-- remove-labels.mjs
     |-- reverse-config-label-sync.mjs
     |-- sync-config-labels.mjs
@@ -77,7 +78,11 @@ This is the general admin config for values that will differ between forks.
 Fields:
 
 - `organization`: the GitHub organization to sync
-- `labelSyncTokenSecretName`: the name of the GitHub Actions secret containing the sync token
+- `authentication.mode`: `pat` or `githubApp`
+- `authentication.pat.tokenSecretName`: the GitHub Actions secret containing the PAT when `mode` is `pat`
+- `authentication.githubApp.appIdSecretName`: the GitHub Actions secret containing the GitHub App ID when `mode` is `githubApp`
+- `authentication.githubApp.privateKeySecretName`: the GitHub Actions secret containing the GitHub App private key when `mode` is `githubApp`
+- `authentication.githubApp.installationIdSecretName`: the GitHub Actions secret containing the GitHub App installation ID when `mode` is `githubApp`
 - `sourceRepository`: the repo whose labels are treated as the source for `Config-Label_Sync`
 - `deleteMissingByDefault`: whether org sync should delete labels that are neither managed nor auto-pruned
 
@@ -86,11 +91,23 @@ Example:
 ```jsonc
 {
   "organization": "your-org-name",
-  "labelSyncTokenSecretName": "LABEL_SYNC_TOKEN",
+  "authentication": {
+    "mode": "pat",
+    "pat": {
+      "tokenSecretName": "LABEL_SYNC_TOKEN"
+    },
+    "githubApp": {
+      "appIdSecretName": "LABEL_SYNC_APP_ID",
+      "privateKeySecretName": "LABEL_SYNC_APP_PRIVATE_KEY",
+      "installationIdSecretName": "LABEL_SYNC_APP_INSTALLATION_ID"
+    }
+  },
   "sourceRepository": "your-org-name/label-sync",
   "deleteMissingByDefault": false
 }
 ```
+
+To switch to GitHub App auth, set `authentication.mode` to `githubApp` and create secrets matching the three configured GitHub App secret names. The configured installation must have access to this configuration repository, the source repository, and every target repository selected by `repository-filter.jsonc`.
 
 ### `config/labels.jsonc`
 
@@ -195,10 +212,11 @@ What it does:
 
 1. Checks out the default branch
 2. Loads shared settings from `config/properties.jsonc`
-3. Reads the current labels on the source repository
-4. Rewrites `config/labels.jsonc` so it exactly matches the source repository labels
-5. Validates `config/auto-pruned-labels.jsonc` so exact default-delete specs remain well-formed
-6. Commits and pushes the change if the config was updated
+3. Resolves either the configured PAT or a GitHub App installation token
+4. Reads the current labels on the source repository
+5. Rewrites `config/labels.jsonc` so it exactly matches the source repository labels
+6. Validates `config/auto-pruned-labels.jsonc` so exact default-delete specs remain well-formed
+7. Commits and pushes the change if the config was updated
 
 This workflow is the bridge between "the labels on this repo right now" and "the managed config we sync elsewhere."
 
@@ -242,9 +260,10 @@ What it does:
 2. Skips the run unless the triggering commit changed `config/**`
 3. Skips the run when the triggering commit author or committer is a bot
 4. Loads shared settings from `config/properties.jsonc`
-5. Validates the config again as a local guard
-6. Creates or updates source repository labels from `config/labels.jsonc`
-7. Deletes exact auto-pruned labels and any other source repository labels that are not in `config/labels.jsonc`
+5. Resolves either the configured PAT or a GitHub App installation token
+6. Validates the config again as a local guard
+7. Creates or updates source repository labels from `config/labels.jsonc`
+8. Deletes exact auto-pruned labels and any other source repository labels that are not in `config/labels.jsonc`
 
 This workflow is the bridge from "the managed config was changed by a person" back to "the source repository label settings should now match that config."
 
@@ -267,13 +286,14 @@ What it does:
 1. Calls `Config-Label_Sync`
 2. Checks out the latest default branch
 3. Loads shared settings from `config/properties.jsonc`
-4. Validates the updated config
-5. Discovers repos in the configured organization
-6. Applies `config/repository-filter.jsonc`
-7. Creates or updates labels from `config/labels.jsonc`
-8. Deletes labels that exactly match entries in `config/auto-pruned-labels.jsonc` unless that label name is managed by `config/labels.jsonc`
-9. Optionally deletes any other unmanaged labels if `delete_missing` or `deleteMissingByDefault` is enabled
-10. If the run is not a dry run and at least one target repo changed, writes a changelog under `changelogs/YYYY-MM-DD/` and commits it with `[skip ci]`
+4. Resolves either the configured PAT or a GitHub App installation token
+5. Validates the updated config
+6. Discovers repos in the configured organization
+7. Applies `config/repository-filter.jsonc`
+8. Creates or updates labels from `config/labels.jsonc`
+9. Deletes labels that exactly match entries in `config/auto-pruned-labels.jsonc` unless that label name is managed by `config/labels.jsonc`
+10. Optionally deletes any other unmanaged labels if `delete_missing` or `deleteMissingByDefault` is enabled
+11. If the run is not a dry run and at least one target repo changed, writes a changelog under `changelogs/YYYY-MM-DD/` and commits it with `[skip ci]`
 
 ### `Remove-Labels`
 
@@ -294,12 +314,13 @@ Inputs:
 What it does:
 
 1. Checks out the latest default branch
-2. Loads the org name and token secret name from `config/properties.jsonc`
-3. Validates the shared config inputs used for repo discovery
-4. Discovers repositories in the configured organization
-5. Applies `config/repository-filter.jsonc` in whitelist or blacklist mode
-6. Removes the exact label from the selected issues and/or pull requests in every remaining repository
-7. If at least one target repo changed, writes a changelog under `changelogs/YYYY-MM-DD/` and commits it with `[skip ci]`
+2. Loads the org name and auth settings from `config/properties.jsonc`
+3. Resolves either the configured PAT or a GitHub App installation token
+4. Validates the shared config inputs used for repo discovery
+5. Discovers repositories in the configured organization
+6. Applies `config/repository-filter.jsonc` in whitelist or blacklist mode
+7. Removes the exact label from the selected issues and/or pull requests in every remaining repository
+8. If at least one target repo changed, writes a changelog under `changelogs/YYYY-MM-DD/` and commits it with `[skip ci]`
 
 ## Changelogs
 
@@ -319,17 +340,19 @@ Each changelog file is created only when a workflow actually changes at least on
 - each issue the label was removed from
 - each pull request the label was removed from
 
-Changelog commits use the configured full-access token and include `[skip ci]` in the commit message so they do not trigger normal workflow/check runs.
+Changelog commits use the resolved PAT or GitHub App installation token and include `[skip ci]` in the commit message so they do not trigger normal workflow/check runs.
 
 Notes:
 
 - GitHub Actions does not currently support conditionally hiding or nesting `workflow_dispatch` inputs, so the closed-only toggles can be described as dependent but not visually tucked under their parent checkboxes.
 
-## Token Requirements
+## Authentication Requirements
 
-Create a repository secret whose name matches `labelSyncTokenSecretName` in `config/properties.jsonc`.
+Set `authentication.mode` in `config/properties.jsonc` to choose how workflows authenticate.
 
-That token needs enough access to:
+For PAT auth, create a repository secret whose name matches `authentication.pat.tokenSecretName`.
+
+That PAT needs enough access to:
 
 - read and update labels on the source repository
 - discover repositories in the organization
@@ -339,11 +362,19 @@ That token needs enough access to:
 - push config updates back to this repository when `Config-Label_Sync` changes `labels.jsonc`
 - push changelog commits back to this repository when an action changes another repository
 
+For GitHub App auth, create repository secrets whose names match:
+
+- `authentication.githubApp.appIdSecretName`
+- `authentication.githubApp.privateKeySecretName`
+- `authentication.githubApp.installationIdSecretName`
+
+The GitHub App installation must be granted access to this configuration repository, the source repository, and every target repository selected by the filter. Its permissions should cover repository metadata, contents write access for config/changelog commits, issues write access for label removal, pull requests write access for label removal, and repository administration or equivalent label-management access for creating, updating, and deleting labels.
+
 ## Setup
 
 1. Fork or clone this repository into the organization you want to manage.
-2. Create the sync token secret in the repo.
-3. Update `config/properties.jsonc` for your org and repo.
+2. Create either the PAT secret or the GitHub App secrets in the repo.
+3. Update `config/properties.jsonc` for your org, repo, and auth mode.
 4. Adjust `config/auto-pruned-labels.jsonc` if you want different exact default-delete specs.
 5. Configure `config/repository-filter.jsonc` for blacklist mode or whitelist mode.
 6. Set the labels on this repository to the label set you want to manage.

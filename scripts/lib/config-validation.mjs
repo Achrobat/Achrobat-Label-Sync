@@ -15,10 +15,122 @@ function isRepositoryName(value) {
   return /^[^/\s]+$/.test(value);
 }
 
+function isSecretName(value) {
+  return typeof value === "string" && /^[A-Z_][A-Z0-9_]*$/.test(value.trim());
+}
+
+function validateSecretName(value, path) {
+  assert(isSecretName(value), `${path} must look like a GitHub secret name.`);
+  return value.trim();
+}
+
+function validateAuthentication(properties, { requireAuth, legacyTokenSecretRequired }) {
+  const legacyPatSecretName = properties.labelSyncTokenSecretName;
+
+  if (properties.authentication === undefined) {
+    if (legacyTokenSecretRequired || legacyPatSecretName !== undefined) {
+      return {
+        mode: "pat",
+        pat: {
+          tokenSecretName: validateSecretName(legacyPatSecretName, "properties.labelSyncTokenSecretName"),
+        },
+        githubApp: {
+          appIdSecretName: "",
+          privateKeySecretName: "",
+          installationIdSecretName: "",
+        },
+      };
+    }
+
+    assert(!requireAuth, "properties.authentication is required.");
+    return undefined;
+  }
+
+  const { authentication } = properties;
+  assert(
+    authentication && typeof authentication === "object" && !Array.isArray(authentication),
+    "properties.authentication must be an object.",
+  );
+  assert(
+    authentication.mode === "pat" || authentication.mode === "githubApp",
+    'properties.authentication.mode must be either "pat" or "githubApp".',
+  );
+
+  const pat = authentication.pat ?? {};
+  assert(pat && typeof pat === "object" && !Array.isArray(pat), "properties.authentication.pat must be an object when provided.");
+
+  const githubApp = authentication.githubApp ?? {};
+  assert(
+    githubApp && typeof githubApp === "object" && !Array.isArray(githubApp),
+    "properties.authentication.githubApp must be an object when provided.",
+  );
+
+  const validated = {
+    mode: authentication.mode,
+    pat: {
+      tokenSecretName: "",
+    },
+    githubApp: {
+      appIdSecretName: "",
+      privateKeySecretName: "",
+      installationIdSecretName: "",
+    },
+  };
+
+  if (authentication.mode === "pat") {
+    validated.pat.tokenSecretName = validateSecretName(
+      pat.tokenSecretName ?? legacyPatSecretName,
+      "properties.authentication.pat.tokenSecretName",
+    );
+  } else if (pat.tokenSecretName !== undefined || legacyPatSecretName !== undefined) {
+    validated.pat.tokenSecretName = validateSecretName(
+      pat.tokenSecretName ?? legacyPatSecretName,
+      "properties.authentication.pat.tokenSecretName",
+    );
+  }
+
+  if (authentication.mode === "githubApp") {
+    validated.githubApp.appIdSecretName = validateSecretName(
+      githubApp.appIdSecretName,
+      "properties.authentication.githubApp.appIdSecretName",
+    );
+    validated.githubApp.privateKeySecretName = validateSecretName(
+      githubApp.privateKeySecretName,
+      "properties.authentication.githubApp.privateKeySecretName",
+    );
+    validated.githubApp.installationIdSecretName = validateSecretName(
+      githubApp.installationIdSecretName,
+      "properties.authentication.githubApp.installationIdSecretName",
+    );
+  } else {
+    if (githubApp.appIdSecretName !== undefined) {
+      validated.githubApp.appIdSecretName = validateSecretName(
+        githubApp.appIdSecretName,
+        "properties.authentication.githubApp.appIdSecretName",
+      );
+    }
+    if (githubApp.privateKeySecretName !== undefined) {
+      validated.githubApp.privateKeySecretName = validateSecretName(
+        githubApp.privateKeySecretName,
+        "properties.authentication.githubApp.privateKeySecretName",
+      );
+    }
+    if (githubApp.installationIdSecretName !== undefined) {
+      validated.githubApp.installationIdSecretName = validateSecretName(
+        githubApp.installationIdSecretName,
+        "properties.authentication.githubApp.installationIdSecretName",
+      );
+    }
+  }
+
+  return validated;
+}
+
 export function validateProperties(properties, options = {}) {
   const {
     requireOrganization = false,
     requireLabelSyncTokenSecretName = false,
+    requireAuthentication = requireLabelSyncTokenSecretName,
     includeSourceRepository = false,
     defaultSourceRepository = "",
     includeDeleteMissingByDefault = false,
@@ -36,12 +148,18 @@ export function validateProperties(properties, options = {}) {
     validated.organization = properties.organization.trim();
   }
 
-  if (requireLabelSyncTokenSecretName) {
-    assert(
-      typeof properties.labelSyncTokenSecretName === "string" && /^[A-Z_][A-Z0-9_]*$/.test(properties.labelSyncTokenSecretName),
-      "properties.labelSyncTokenSecretName must look like a GitHub secret name.",
-    );
-    validated.labelSyncTokenSecretName = properties.labelSyncTokenSecretName.trim();
+  const authentication = validateAuthentication(properties, {
+    requireAuth: requireAuthentication,
+    legacyTokenSecretRequired: requireLabelSyncTokenSecretName && properties.authentication === undefined,
+  });
+
+  if (authentication) {
+    validated.authentication = authentication;
+    validated.authMode = authentication.mode;
+    validated.labelSyncTokenSecretName = authentication.pat.tokenSecretName;
+    validated.githubAppIdSecretName = authentication.githubApp.appIdSecretName;
+    validated.githubAppPrivateKeySecretName = authentication.githubApp.privateKeySecretName;
+    validated.githubAppInstallationIdSecretName = authentication.githubApp.installationIdSecretName;
   }
 
   if (properties.sourceRepository !== undefined) {
