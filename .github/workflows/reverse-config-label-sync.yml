@@ -1,30 +1,23 @@
 name: Reverse-Config-Label-Sync
 
 on:
-  workflow_run:
-    workflows:
-      - Validate-Configs
-    types:
-      - completed
+  push:
+    paths:
+      - "config/labels.jsonc"
 
 permissions:
   contents: read
 
 jobs:
   reverse-sync:
-    if: >-
-      ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == github.event.repository.default_branch
-      }}
+    if: ${{ github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out validated commit
+      - name: Check out triggering commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 2
 
       - name: Check triggering commit
