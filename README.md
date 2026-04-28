@@ -12,12 +12,13 @@ Its job is to:
 
 ## How It Works
 
-This repo uses four workflows:
+This repo uses five workflows:
 
 1. `Config-Label_Sync`
 2. `Validate-Configs`
-3. `Org-Label-Sync`
-4. `Remove-Labels`
+3. `Reverse-Config-Label-Sync`
+4. `Org-Label-Sync`
+5. `Remove-Labels`
 
 The normal flow is:
 
@@ -28,6 +29,13 @@ The normal flow is:
 5. That config change triggers `Validate-Configs`.
 6. `Org-Label-Sync` then checks out the latest default branch, validates the config again, and syncs labels across the organization.
 
+The reverse flow is:
+
+1. You make a non-bot commit to `config/**` on the default branch.
+2. `Validate-Configs` runs for that commit.
+3. If validation passes, `Reverse-Config-Label-Sync` updates the configured source repository labels from `config/labels.jsonc`.
+4. Bot commits are ignored, so `Config-Label_Sync` can update `labels.jsonc` without triggering a reverse sync loop.
+
 ## Repository Layout
 
 ```text
@@ -37,6 +45,7 @@ The normal flow is:
 |       |-- config-label-sync.yml
 |       |-- org-label-sync.yml
 |       |-- remove-labels.yml
+|       |-- reverse-config-label-sync.yml
 |       `-- validate-configs.yml
 |-- config/
 |   |-- auto-pruned-labels.jsonc
@@ -49,6 +58,7 @@ The normal flow is:
 `-- scripts/
     |-- export-properties.mjs
     |-- remove-labels.mjs
+    |-- reverse-config-label-sync.mjs
     |-- sync-config-labels.mjs
     |-- sync-labels.mjs
     `-- lib/
@@ -218,6 +228,26 @@ Validation includes:
 - exact auto-pruned label shape validation
 - validation for the shared config used by `Remove-Labels`
 
+### `Reverse-Config-Label-Sync`
+
+File: `.github/workflows/reverse-config-label-sync.yml`
+
+Trigger:
+
+- after `Validate-Configs` completes successfully for a push to the default branch
+
+What it does:
+
+1. Checks out the exact commit that passed validation
+2. Skips the run unless the triggering commit changed `config/**`
+3. Skips the run when the triggering commit author or committer is a bot
+4. Loads shared settings from `config/properties.jsonc`
+5. Validates the config again as a local guard
+6. Creates or updates source repository labels from `config/labels.jsonc`
+7. Deletes exact auto-pruned labels and any other source repository labels that are not in `config/labels.jsonc`
+
+This workflow is the bridge from "the managed config was changed by a person" back to "the source repository label settings should now match that config."
+
 ### `Org-Label-Sync`
 
 File: `.github/workflows/org-label-sync.yml`
@@ -304,6 +334,7 @@ That token needs enough access to:
 - read and update labels on the source repository
 - discover repositories in the organization
 - read and update labels on target repositories
+- read and update labels on the source repository when running `Reverse-Config-Label-Sync`
 - read and update issues and pull requests when running `Remove-Labels`
 - push config updates back to this repository when `Config-Label_Sync` changes `labels.jsonc`
 - push changelog commits back to this repository when an action changes another repository

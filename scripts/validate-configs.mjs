@@ -25,6 +25,7 @@ function runValidation(scriptName) {
 
 async function main() {
   await runValidation("sync-labels.mjs");
+  await runValidation("reverse-config-label-sync.mjs");
   await runValidation("remove-labels.mjs");
 }
 

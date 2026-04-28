@@ -1,0 +1,81 @@
+name: Reverse-Config-Label-Sync
+
+on:
+  workflow_run:
+    workflows:
+      - Validate-Configs
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  reverse-sync:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == github.event.repository.default_branch
+      }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out validated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: Check triggering commit
+        id: trigger
+        shell: bash
+        run: |
+          author_name="$(git show -s --format='%an' HEAD)"
+          author_email="$(git show -s --format='%ae' HEAD)"
+          committer_name="$(git show -s --format='%cn' HEAD)"
+          committer_email="$(git show -s --format='%ce' HEAD)"
+          changed_files="$(git diff-tree --no-commit-id --name-only -r -m HEAD)"
+
+          is_bot_commit=false
+          case "${author_name}|${author_email}|${committer_name}|${committer_email}" in
+            *"[bot]"*|*"github-actions[bot]"*|*"41898282+github-actions[bot]@users.noreply.github.com"*)
+              is_bot_commit=true
+              ;;
+          esac
+
+          has_config_change=false
+          if echo "${changed_files}" | grep -q '^config/'; then
+            has_config_change=true
+          fi
+
+          echo "Commit author: ${author_name} <${author_email}>"
+          echo "Commit committer: ${committer_name} <${committer_email}>"
+          echo "Config files changed: ${has_config_change}"
+          echo "Bot commit: ${is_bot_commit}"
+          echo "has_config_change=${has_config_change}" >> "${GITHUB_OUTPUT}"
+          echo "is_bot_commit=${is_bot_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Node.js
+        if: ${{ steps.trigger.outputs.has_config_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Load properties
+        if: ${{ steps.trigger.outputs.has_config_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
+        id: properties
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/export-properties.mjs
+
+      - name: Validate config
+        if: ${{ steps.trigger.outputs.has_config_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
+        run: node scripts/reverse-config-label-sync.mjs --validate-only
+
+      - name: Sync config into source repo labels
+        if: ${{ steps.trigger.outputs.has_config_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
+        env:
+          LABEL_SYNC_TOKEN: ${{ secrets[steps.properties.outputs.label_sync_token_secret_name] }}
+          SOURCE_REPOSITORY: ${{ steps.properties.outputs.source_repository }}
+        run: node scripts/reverse-config-label-sync.mjs
