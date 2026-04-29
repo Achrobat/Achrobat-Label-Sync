@@ -11,4 +11,25 @@
 //     "description": "Waiting on something external"
 //   }
 // ]
-[]
+[
+  {
+    "name": "Bug Fix",
+    "color": "e89abb",
+    "description": ""
+  },
+  {
+    "name": "Enhancement",
+    "color": "f76cc5",
+    "description": "Enhance me good sir"
+  },
+  {
+    "name": "TL2",
+    "color": "69e7bb",
+    "description": "TL2"
+  },
+  {
+    "name": "TL3",
+    "color": "272f64",
+    "description": "TL3"
+  }
+]
