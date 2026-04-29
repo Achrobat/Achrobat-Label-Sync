@@ -3,6 +3,11 @@ name: Remove-Labels
 on:
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: "[TEST MODE] Preview label removals without applying them. Generates fake changelog."
+        required: false
+        type: boolean
+        default: false
       run_on_issues:
         description: "Remove From Issues"
         required: true
@@ -26,6 +31,10 @@ on:
       label_name:
         description: "Exact Name of Label:"
         required: true
+        type: string
+      repositories:
+        description: "[OPTIONAL] Config Override: Run workflow on this set of non-source repositories exclusively. Format: name, name2"
+        required: false
         type: string
 
 permissions:
@@ -71,26 +80,37 @@ jobs:
         run: node scripts/create-github-auth-token.mjs
 
       - name: Validate config
+        env:
+          TARGET_REPOSITORIES: ${{ inputs.repositories }}
         run: node scripts/remove-labels.mjs --validate-only
 
       - name: Remove labels from selected items
         env:
+          DRY_RUN: ${{ inputs.dry_run }}
           RUN_ON_ISSUES: ${{ inputs.run_on_issues }}
           TARGET_ONLY_CLOSED_ISSUES: ${{ inputs.target_only_closed_issues }}
           RUN_ON_PULL_REQUESTS: ${{ inputs.run_on_pull_requests }}
           TARGET_ONLY_CLOSED_PULL_REQUESTS: ${{ inputs.target_only_closed_pull_requests }}
           LABEL_NAME: ${{ inputs.label_name }}
+          TARGET_REPOSITORIES: ${{ inputs.repositories }}
         run: node scripts/remove-labels.mjs
 
       - name: Commit changelog
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -z "$(git status --porcelain -- changelogs)" ]; then
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            changelog_path="fake-changelogs"
+            commit_message="Add Remove-Labels fake changelog [skip ci]"
+          else
+            changelog_path="changelogs"
+            commit_message="Add Remove-Labels changelog [skip ci]"
+          fi
+          if [ -z "$(git status --porcelain -- "$changelog_path")" ]; then
             echo "No changelog changes detected."
             exit 0
           fi
-          git add changelogs
-          git commit -m "Add Remove-Labels changelog [skip ci]"
+          git add "$changelog_path"
+          git commit -m "$commit_message"
           git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
