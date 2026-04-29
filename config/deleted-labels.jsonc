@@ -9,4 +9,10 @@
 //     "description": "No recent activity"
 //   }
 // ]
-[]
+[
+  {
+    "name": "Enhancement",
+    "color": "f76cc5",
+    "description": "Enhance me good sir"
+  }
+]
