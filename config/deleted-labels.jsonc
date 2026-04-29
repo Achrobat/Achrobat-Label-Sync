@@ -14,5 +14,10 @@
     "name": "Enhancement",
     "color": "f76cc5",
     "description": "Enhance me good sir"
+  },
+  {
+    "name": "Enhancement Replacement Test",
+    "color": "616e91",
+    "description": "Yuhh"
   }
 ]
