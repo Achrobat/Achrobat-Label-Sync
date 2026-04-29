@@ -2,7 +2,7 @@
   "organization": "Achrobat",
   "authentication": {
     // The authentication mode to use for accessing the GitHub API. You can choose between "pat" (Personal Access Token) or "githubApp" (GitHub App). Depending on the mode you choose, you will need to provide the corresponding secrets as described below.
-    "mode": "pat",
+    "mode": "githubApp",
     "pat": {
       // This is the name of the secret that contains the GitHub PAT token. You should create this secret in your repository and set its value to a valid PAT token with appropriate permissions.
       "tokenSecretName": "LABEL_SYNC_TOKEN"
