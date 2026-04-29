@@ -197,6 +197,8 @@ The file uses:
 
 `useWhitelist` defaults to `false`, so blacklist mode is the default behavior.
 
+The configured `sourceRepository` is always skipped by repository-filter processing. You do not need to add it to either list, and listing it in `whitelist` or `blacklist` will not make `Org-Label-Sync` or `Remove-Labels` target it.
+
 Entries in either list can be either:
 
 - `repo-name`
@@ -303,7 +305,7 @@ Inputs:
 - `dry_run`: preview changes without applying repository label changes; when previewed changes exist, writes a fake changelog under `fake-changelogs/`
 - `delete_missing`: delete extra labels that are not in `config/labels.jsonc`; unchecked keeps extra labels
 - `delete_github_default_labels`: delete exact GitHub default labels from `config/github-default-labels.jsonc`; checked by default, unchecked keeps them
-- `repositories`: comma-separated config override that runs exclusively on those repositories and ignores `repository-filter.jsonc`
+- `repositories`: comma-separated config override that runs exclusively on those non-source repositories and ignores `repository-filter.jsonc`
 - `label_replacements`: optional comma-separated replacements in `old=new, old2=new2` format; each old label must exist in `config/deleted-labels.jsonc`, and each new label must exist in `config/labels.jsonc`
 
 `label_replacements` is meant for renames. For example, `Enchantment=Enhancement` will replace `Enchantment` with `Enhancement` across selected repositories before the deleted-label pass removes old labels. If a target repo has `Enchantment` but does not yet have `Enhancement`, the workflow renames the repo label, which preserves issue and pull request assignments. If both labels already exist, it adds `Enhancement` to every issue and pull request that has `Enchantment`, then deletes `Enchantment`.
@@ -318,7 +320,7 @@ What it does:
 4. Resolves either the configured PAT or a GitHub App installation token
 5. Validates the updated config
 6. Discovers repos in the configured organization
-7. Applies `config/repository-filter.jsonc`, unless `repositories` was provided as a workflow dispatch config override
+7. Applies `config/repository-filter.jsonc`, unless `repositories` was provided as a workflow dispatch config override, and skips the configured source repository
 8. Applies any requested `label_replacements`
 9. Creates or updates labels from `config/labels.jsonc`
 10. Deletes labels whose names match entries in `config/deleted-labels.jsonc`
@@ -349,7 +351,7 @@ What it does:
 3. Resolves either the configured PAT or a GitHub App installation token
 4. Validates the shared config inputs used for repo discovery
 5. Discovers repositories in the configured organization
-6. Applies `config/repository-filter.jsonc` in whitelist or blacklist mode
+6. Applies `config/repository-filter.jsonc` in whitelist or blacklist mode and skips the configured source repository
 7. Removes the exact label from the selected issues and/or pull requests in every remaining repository
 8. If at least one target repo changed, writes a changelog under `changelogs/YYYY-MM-DD/` and commits it with `[skip ci]`
 

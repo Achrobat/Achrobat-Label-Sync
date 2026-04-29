@@ -1,7 +1,8 @@
 import path from "node:path";
-import { assert, normalizeName, normalizeRepositoryRef, readJsonc } from "./lib/config-utils.mjs";
+import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties, validateRepositoryFilter } from "./lib/config-validation.mjs";
 import { renderRemoveLabelsSection, writeChangelog } from "./lib/changelog-utils.mjs";
+import { filterRepositories } from "./lib/repository-selection.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -74,25 +75,6 @@ async function getOrganizationRepositories(token, orgName) {
 
     page += 1;
   }
-}
-
-function filterRepositories(repositories, orgName, repositoryFilter) {
-  return repositories
-    .filter((repository) => {
-      const shortName = normalizeRepositoryRef(repository.name);
-      const fullName = normalizeRepositoryRef(repository.full_name);
-      const orgScopedName = normalizeRepositoryRef(`${orgName}/${repository.name}`);
-      const matchesFilter = (entries) => (
-        entries.has(shortName) || entries.has(fullName) || entries.has(orgScopedName)
-      );
-
-      if (repositoryFilter.useWhitelist) {
-        return matchesFilter(repositoryFilter.whitelist);
-      }
-
-      return !matchesFilter(repositoryFilter.blacklist);
-    })
-    .sort((left, right) => left.full_name.localeCompare(right.full_name));
 }
 
 async function getLabelledIssues(token, repositoryFullName, state, requestedLabel) {
@@ -201,6 +183,8 @@ async function main() {
   const properties = validateProperties(await readJsonc(propertiesPath), {
     requireOrganization: true,
     requireLabelSyncTokenSecretName: true,
+    includeSourceRepository: true,
+    defaultSourceRepository: process.env.SOURCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY ?? "",
   });
   const repositoryFilter = validateRepositoryFilter(await readJsonc(repositoryFilterPath));
   const activeFilterCount = repositoryFilter.useWhitelist ? repositoryFilter.whitelist.size : repositoryFilter.blacklist.size;
@@ -221,7 +205,12 @@ async function main() {
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
-  const repositories = filterRepositories(discoveredRepositories, properties.organization, repositoryFilter);
+  const repositories = filterRepositories(
+    discoveredRepositories,
+    properties.organization,
+    repositoryFilter,
+    properties.sourceRepository,
+  );
 
   console.log(
     `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} remain after repository-filter processing.`,

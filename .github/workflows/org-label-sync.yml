@@ -19,7 +19,7 @@ on:
         type: boolean
         default: true
       repositories:
-        description: "[OPTIONAL] Config Override: Run workflow on this set of repositories exclusively. Format: name, name2"
+        description: "[OPTIONAL] Config Override: Run workflow on this set of non-source repositories exclusively. Format: name, name2"
         required: false
         type: string
       label_replacements:

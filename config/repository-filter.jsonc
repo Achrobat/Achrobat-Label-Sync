@@ -1,5 +1,6 @@
 // Set to true to sync only the repositories listed in "whitelist".
 // Set to false to sync every discovered org repository except those listed in "blacklist".
+// The configured source repository does not need to be listed here and is skipped even if listed.
 {
   "useWhitelist": false,
 

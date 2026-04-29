@@ -5,7 +5,6 @@ import {
   normalizeColor,
   normalizeDescription,
   normalizeName,
-  normalizeRepositoryRef,
   readJsonc,
 } from "./lib/config-utils.mjs";
 import {
@@ -17,6 +16,12 @@ import {
   validateRepositoryFilter,
 } from "./lib/config-validation.mjs";
 import { renderLabelSyncSection, writeChangelog } from "./lib/changelog-utils.mjs";
+import {
+  filterRepositories,
+  isSourceRepository,
+  repositoryAliases,
+  repositoryMatchesEntries,
+} from "./lib/repository-selection.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -165,47 +170,18 @@ async function getOrganizationRepositories(token, orgName) {
   }
 }
 
-function filterRepositories(repositories, orgName, repositoryFilter) {
-  return repositories
-    .filter((repository) => {
-      const shortName = normalizeRepositoryRef(repository.name);
-      const fullName = normalizeRepositoryRef(repository.full_name);
-      const orgScopedName = normalizeRepositoryRef(`${orgName}/${repository.name}`);
-      const matchesFilter = (entries) => (
-        entries.has(shortName) || entries.has(fullName) || entries.has(orgScopedName)
-      );
-
-      if (repositoryFilter.useWhitelist) {
-        return matchesFilter(repositoryFilter.whitelist);
-      }
-
-      return !matchesFilter(repositoryFilter.blacklist);
-    })
-    .sort((left, right) => left.full_name.localeCompare(right.full_name));
-}
-
-function applyTargetRepositoryOverride(repositories) {
+function applyTargetRepositoryOverride(repositories, orgName, sourceRepository) {
   if (!targetRepositoryFilter) {
     return repositories;
   }
 
-  const selected = repositories.filter((repository) => {
-    const shortName = normalizeRepositoryRef(repository.name);
-    const fullName = normalizeRepositoryRef(repository.full_name);
-    const orgScopedName = normalizeRepositoryRef(`${repository.owner?.login ?? ""}/${repository.name}`);
-    return (
-      targetRepositoryFilter.has(shortName)
-      || targetRepositoryFilter.has(fullName)
-      || targetRepositoryFilter.has(orgScopedName)
-    );
-  });
+  const selected = repositories.filter((repository) => (
+    !isSourceRepository(repository, sourceRepository, orgName)
+    && repositoryMatchesEntries(repository, targetRepositoryFilter, orgName)
+  ));
 
   const available = new Set(
-    repositories.flatMap((repository) => [
-      normalizeRepositoryRef(repository.name),
-      normalizeRepositoryRef(repository.full_name),
-      normalizeRepositoryRef(`${repository.owner?.login ?? ""}/${repository.name}`),
-    ]),
+    repositories.flatMap((repository) => [...repositoryAliases(repository, orgName)]),
   );
   const missing = [...targetRepositoryFilter].filter((entry) => !available.has(entry));
 
@@ -571,6 +547,7 @@ async function main() {
     requireOrganization: true,
     requireLabelSyncTokenSecretName: true,
     includeSourceRepository: true,
+    defaultSourceRepository: process.env.SOURCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY ?? "",
   });
   const labels = validateLabels(await readJsonc(labelsPath));
   const deletedLabels = validateDeletedLabels(await readJsonc(deletedLabelsPath));
@@ -598,8 +575,8 @@ async function main() {
   const discoveredRepositories = await getOrganizationRepositories(token, orgName);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
   const repositories = usingTargetRepositoryOverride
-    ? applyTargetRepositoryOverride(discoveredRepositories)
-    : filterRepositories(discoveredRepositories, orgName, repositoryFilter);
+    ? applyTargetRepositoryOverride(discoveredRepositories, orgName, properties.sourceRepository)
+    : filterRepositories(discoveredRepositories, orgName, repositoryFilter, properties.sourceRepository);
 
   if (usingTargetRepositoryOverride) {
     console.log(
