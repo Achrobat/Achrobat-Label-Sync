@@ -2,18 +2,25 @@ import path from "node:path";
 import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties, validateRepositoryFilter } from "./lib/config-validation.mjs";
 import { renderRemoveLabelsSection, writeChangelog } from "./lib/changelog-utils.mjs";
-import { filterRepositories } from "./lib/repository-selection.mjs";
+import {
+  filterRepositories,
+  isSourceRepository,
+  repositoryAliases,
+  repositoryMatchesEntries,
+} from "./lib/repository-selection.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
 const repositoryFilterPath = path.join(workspaceRoot, "config", "repository-filter.jsonc");
 
 const validateOnly = process.argv.includes("--validate-only");
+const dryRun = validateOnly || process.env.DRY_RUN === "true";
 const runOnIssues = parseBoolean(process.env.RUN_ON_ISSUES);
 const targetOnlyClosedIssues = parseBoolean(process.env.TARGET_ONLY_CLOSED_ISSUES) ?? false;
 const runOnPullRequests = parseBoolean(process.env.RUN_ON_PULL_REQUESTS);
 const targetOnlyClosedPullRequests = parseBoolean(process.env.TARGET_ONLY_CLOSED_PULL_REQUESTS) ?? false;
 const labelName = (process.env.LABEL_NAME ?? "").trim();
+const targetRepositoryFilter = parseRepositoryFilter(process.env.TARGET_REPOSITORIES);
 
 function parseBoolean(value) {
   if (value === undefined || value === null || value === "") {
@@ -21,6 +28,19 @@ function parseBoolean(value) {
   }
 
   return value.toLowerCase() === "true";
+}
+
+function parseRepositoryFilter(value) {
+  if (!value) {
+    return null;
+  }
+
+  return new Set(
+    value
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }
 
 function validateRunInputs() {
@@ -31,6 +51,29 @@ function validateRunInputs() {
     runOnIssues || runOnPullRequests,
     'At least one of "Run on Issues" or "Run on Pull Requests" must be enabled.',
   );
+}
+
+function applyTargetRepositoryOverride(repositories, orgName, sourceRepository) {
+  if (!targetRepositoryFilter) {
+    return repositories;
+  }
+
+  const selected = repositories.filter((repository) => (
+    !isSourceRepository(repository, sourceRepository, orgName)
+    && repositoryMatchesEntries(repository, targetRepositoryFilter, orgName)
+  ));
+
+  const available = new Set(
+    repositories.flatMap((repository) => [...repositoryAliases(repository, orgName)]),
+  );
+  const missing = [...targetRepositoryFilter].filter((entry) => !available.has(entry));
+
+  assert(
+    missing.length === 0,
+    `Requested repositories were not found in the discovered org repository set: ${missing.join(", ")}.`,
+  );
+
+  return selected.sort((left, right) => left.full_name.localeCompare(right.full_name));
 }
 
 async function githubRequest(token, method, apiPath) {
@@ -125,13 +168,16 @@ async function processIssues(token, repository, requestedLabel) {
       continue;
     }
 
-    await removeLabelFromIssue(token, repository.full_name, issue.number, matchingLabel.name);
+    if (!dryRun) {
+      await removeLabelFromIssue(token, repository.full_name, issue.number, matchingLabel.name);
+    }
+
     removed.push({
       number: issue.number,
       label: matchingLabel.name,
       url: issue.html_url,
     });
-    console.log(`  Removed "${matchingLabel.name}" from issue #${issue.number}`);
+    console.log(`  ${dryRun ? "Would remove" : "Removed"} "${matchingLabel.name}" from issue #${issue.number}`);
   }
 
   return removed;
@@ -150,13 +196,16 @@ async function processPullRequests(token, repository, requestedLabel) {
       continue;
     }
 
-    await removeLabelFromIssue(token, repository.full_name, pullRequest.number, matchingLabel.name);
+    if (!dryRun) {
+      await removeLabelFromIssue(token, repository.full_name, pullRequest.number, matchingLabel.name);
+    }
+
     removed.push({
       number: pullRequest.number,
       label: matchingLabel.name,
       url: pullRequest.html_url,
     });
-    console.log(`  Removed "${matchingLabel.name}" from pull request #${pullRequest.number}`);
+    console.log(`  ${dryRun ? "Would remove" : "Removed"} "${matchingLabel.name}" from pull request #${pullRequest.number}`);
   }
 
   return removed;
@@ -205,22 +254,36 @@ async function main() {
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
-  const repositories = filterRepositories(
-    discoveredRepositories,
-    properties.organization,
-    repositoryFilter,
-    properties.sourceRepository,
-  );
+  const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
+  const repositories = usingTargetRepositoryOverride
+    ? applyTargetRepositoryOverride(discoveredRepositories, properties.organization, properties.sourceRepository)
+    : filterRepositories(
+      discoveredRepositories,
+      properties.organization,
+      repositoryFilter,
+      properties.sourceRepository,
+    );
 
-  console.log(
-    `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} remain after repository-filter processing.`,
-  );
+  if (usingTargetRepositoryOverride) {
+    console.log(
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} selected by workflow repository override.`,
+    );
+  } else {
+    console.log(
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} remain after repository-filter processing.`,
+    );
+  }
 
   if (repositories.length === 0) {
-    console.log("No repositories remain after repository-filter processing. Nothing to remove.");
+    console.log(
+      usingTargetRepositoryOverride
+        ? "No repositories were selected by the workflow repository override. Nothing to remove."
+        : "No repositories remain after repository-filter processing. Nothing to remove.",
+    );
     return;
   }
 
+  console.log(dryRun ? "Running in dry-run mode." : "Applying changes.");
   console.log(
     `Removing exact label "${labelName}" from ${runOnIssues ? "issues" : ""}${runOnIssues && runOnPullRequests ? " and " : ""}${runOnPullRequests ? "pull requests" : ""}.`,
   );
@@ -241,14 +304,18 @@ async function main() {
   );
 
   await writeChangelog({
-    workflowName: "Remove-Labels",
+    workflowName: dryRun ? "Remove-Labels Fake" : "Remove-Labels",
+    directoryName: dryRun ? "fake-changelogs" : "changelogs",
     introLines: [
-      `Repository filter mode: ${activeFilterMode}`,
+      dryRun ? "Preview mode: true; no label removals were applied" : null,
+      usingTargetRepositoryOverride
+        ? "Repository selection: workflow dispatch config override"
+        : `Repository filter mode: ${activeFilterMode}`,
       `Processed repositories: ${repositories.length}`,
       `Requested label: ${labelName}`,
       `Issue scope: ${runOnIssues ? (targetOnlyClosedIssues ? "closed issues only" : "all issues") : "disabled"}`,
       `Pull request scope: ${runOnPullRequests ? (targetOnlyClosedPullRequests ? "closed pull requests only" : "all pull requests") : "disabled"}`,
-    ],
+    ].filter((line) => line !== null),
     sections: results.map(renderRemoveLabelsSection),
   });
 }
