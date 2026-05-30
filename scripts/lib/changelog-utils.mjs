@@ -39,7 +39,7 @@ export function getWorkflowMetadata(workflowName) {
   };
 }
 
-export async function writeChangelog({ workflowName, introLines, sections }) {
+export async function writeChangelog({ workflowName, dryRun = false, introLines, sections }) {
   const changedSections = sections.filter((section) => section.hasChanges);
 
   if (changedSections.length === 0) {
@@ -51,7 +51,9 @@ export async function writeChangelog({ workflowName, introLines, sections }) {
   const metadata = getWorkflowMetadata(workflowName);
   const timestamp = formatUtcTimestamp(now);
   const runId = metadata.runId || `${Date.now()}`;
-  const fileName = `${timestamp.replace(/[:]/g, "").replace(/Z$/, "z")}-${slugify(workflowName)}-${runId}.md`;
+  const fileName = dryRun
+    ? "fake-changelog.md"
+    : `${timestamp.replace(/[:]/g, "").replace(/Z$/, "z")}-${slugify(workflowName)}-${runId}.md`;
   const changelogDir = path.join(process.cwd(), "changelogs");
   const changelogPath = path.join(changelogDir, fileName);
 

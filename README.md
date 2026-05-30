@@ -94,7 +94,7 @@ Inputs:
 
 `label_replacements` is meant for label renames. The old label must exist in `config/deleted-labels.jsonc`, and the new label must exist in `config/labels.jsonc`.
 
-When changes are made, the workflow writes changelogs under `changelogs/`. Dry runs write preview changelogs to the same folder with filenames that include `fake`.
+When changes are made, the workflow writes changelogs under `changelogs/`. Dry runs always write to `changelogs/fake-changelog.md`, overwriting the previous dry-run preview.
 
 ### Remove-Labels
 
