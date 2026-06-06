@@ -13,6 +13,11 @@
 // ]
 [
   {
+    "name": "Another New Label!! For ALl!!",
+    "color": "f92106",
+    "description": ""
+  },
+  {
     "name": "Bug Fix",
     "color": "e89abb",
     "description": ""
