@@ -94,7 +94,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            changelog_path="fake-changelogs"
+            changelog_path="changelogs/fake-changelog.md"
             commit_message="Org-Label-Sync Changelog [Fake]"
           else
             changelog_path="changelogs"
