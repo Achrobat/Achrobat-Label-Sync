@@ -14,7 +14,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_NUMBER: ${{ github.run_number }}
-          BUILD_ID: newline-test
+          BUILD_ID: daily-2026-05-73-java17
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
@@ -32,7 +32,6 @@ jobs:
               embeds: [{
                 title: $title,
                 url: $url,
-                description: "A daily build workflow reached a failure condition and needs review.",
                 color: 15158332,
                 fields: [
                   {name: "Build", value: $build, inline: true},
