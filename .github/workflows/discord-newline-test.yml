@@ -13,7 +13,6 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          REPOSITORY: ${{ github.repository }}
           RUN_NUMBER: ${{ github.run_number }}
           BUILD_ID: newline-test
         run: |
@@ -24,9 +23,8 @@ jobs:
           fi
 
           payload=$(jq -n \
-            --arg title "Daily modpack build failed" \
+            --arg title "Daily Build Failure" \
             --arg url "$RUN_URL" \
-            --arg repo "$REPOSITORY" \
             --arg run "$RUN_NUMBER" \
             --arg build "$BUILD_ID" \
             '{
@@ -38,10 +36,7 @@ jobs:
                 color: 15158332,
                 fields: [
                   {name: "Build", value: $build, inline: true},
-                  {name: "Run", value: ("#" + $run), inline: true},
-                  {name: "Repository", value: $repo, inline: false},
-                  {name: "Failure", value: "Pack test failed", inline: false},
-                  {name: "Action", value: "Open the linked workflow run for logs and artifacts.", inline: false}
+                  {name: "Run", value: ("#" + $run), inline: true}
                 ],
                 footer: {text: "GitHub Actions"},
                 timestamp: now | todateiso8601
