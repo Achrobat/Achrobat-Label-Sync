@@ -1,0 +1,25 @@
+﻿name: Discord-Newline-Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  send-test-message:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Discord webhook newline test
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_WEBHOOK_URL secret not set, skipping notification"
+            exit 0
+          fi
+          content=":x: Daily modpack build **newline-test** failed the pack test.\n${RUN_URL}"
+          payload=$(jq -n --arg content "$content" '{content: $content}')
+          echo "$payload"
+          curl -fsS -X POST -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
