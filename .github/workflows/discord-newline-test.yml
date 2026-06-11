@@ -1,4 +1,4 @@
-﻿name: Discord-Newline-Test
+name: Discord-Embed-Test
 
 on:
   workflow_dispatch:
@@ -8,18 +8,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send Discord webhook newline test
+      - name: Send Discord webhook embed test
         shell: bash
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+          BUILD_ID: newline-test
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
             echo "DISCORD_WEBHOOK_URL secret not set, skipping notification"
             exit 0
           fi
-          content=":x: Daily modpack build **newline-test** failed the pack test.\n${RUN_URL}"
-          payload=$(jq -n --arg content "$content" '{content: $content}')
+
+          payload=$(jq -n \
+            --arg title "Daily modpack build failed" \
+            --arg url "$RUN_URL" \
+            --arg repo "$REPOSITORY" \
+            --arg run "$RUN_NUMBER" \
+            --arg build "$BUILD_ID" \
+            '{
+              username: "GTNH Daily Build",
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: "A daily build workflow reached a failure condition and needs review.",
+                color: 15158332,
+                fields: [
+                  {name: "Build", value: $build, inline: true},
+                  {name: "Run", value: ("#" + $run), inline: true},
+                  {name: "Repository", value: $repo, inline: false},
+                  {name: "Failure", value: "Pack test failed", inline: false},
+                  {name: "Action", value: "Open the linked workflow run for logs and artifacts.", inline: false}
+                ],
+                footer: {text: "GitHub Actions"},
+                timestamp: now | todateiso8601
+              }]
+            }')
+
           echo "$payload"
           curl -fsS -X POST -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
