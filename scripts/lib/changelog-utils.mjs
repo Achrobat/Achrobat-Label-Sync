@@ -37,12 +37,16 @@ function renderList(items, renderItem) {
 }
 
 function parseGeneratedDate(content, fallbackDate) {
-  const generatedMatch = content.match(/^- Generated: (\d{4}-\d{2}-\d{2})T/m);
-  return generatedMatch?.[1] ?? fallbackDate;
+  const generatedOnMatch = content.match(/^Generated On: (\d{4}-\d{2}-\d{2})$/m);
+  if (generatedOnMatch) {
+    return generatedOnMatch[1];
+  }
+
+  return content.match(/^- Generated: (\d{4}-\d{2}-\d{2})T/m)?.[1] ?? fallbackDate;
 }
 
 function parseGeneratedTimestamp(content) {
-  return content.match(/^- Generated: ([^\n]+)$/m)?.[1] ?? "";
+  return content.match(/^- Generated: ([^\n]+)$/m)?.[1] ?? content.match(/^Generated On: ([^\n]+)$/m)?.[1] ?? "";
 }
 
 function parseWorkflowName(content, fallbackFileName) {
@@ -159,7 +163,7 @@ export function getWorkflowMetadata(workflowName) {
   };
 }
 
-export async function writeChangelog({ workflowName, dryRun = false, introLines, sections }) {
+export async function writeChangelog({ workflowName, dryRun = false, introLines = [], summaryLines = null, sections }) {
   const changedSections = sections.filter((section) => section.hasChanges);
 
   if (changedSections.length === 0) {
@@ -170,15 +174,27 @@ export async function writeChangelog({ workflowName, dryRun = false, introLines,
   const now = new Date();
   const metadata = getWorkflowMetadata(workflowName);
   const timestamp = formatUtcTimestamp(now);
+  const generatedDate = formatDatePath(now);
   const fileName = dryRun ? fakeChangelogFileName : latestChangelogFileName;
   const changelogDir = path.join(process.cwd(), "changelogs");
   const changelogPath = path.join(changelogDir, fileName);
+  const workflowRun = formatWorkflowRunLink(metadata);
+  const renderedSummaryLines = typeof summaryLines === "function"
+    ? summaryLines({ generatedDate, metadata, workflowRun })
+    : summaryLines;
 
-  const lines = [
+  const lines = renderedSummaryLines ? [
+    `# ${workflowName} Changelog`,
+    "",
+    ...renderedSummaryLines.filter((line) => line !== null),
+    "",
+    "## Changed Repositories",
+    "",
+  ] : [
     `# ${workflowName} Changelog`,
     "",
     `- Generated: ${timestamp}`,
-    `- Workflow run: ${formatWorkflowRunLink(metadata)}`,
+    `- Workflow run: ${workflowRun}`,
     metadata.actor ? `- Actor: ${metadata.actor}` : null,
     ...introLines.map((line) => `- ${line}`),
     "",

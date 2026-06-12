@@ -89,6 +89,48 @@ function parseLabelReplacements(value) {
     });
 }
 
+function formatDisplayBoolean(value) {
+  return value ? "True" : "False";
+}
+
+function formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode) {
+  if (usingTargetRepositoryOverride) {
+    return "Custom";
+  }
+
+  return activeFilterMode === "whitelist" ? "Whitelist" : "Blacklist";
+}
+
+function formatSpecifiedReplacements(replacements) {
+  return replacements.map((replacement) => `${replacement.oldName} -> ${replacement.newName}`).join(", ");
+}
+
+function summarizeChangelogResults(results) {
+  return results.reduce(
+    (summary, result) => {
+      if (result.hasChanges) {
+        summary.repositoriesAffected += 1;
+      }
+
+      summary.createdLabels += result.createdLabels.length;
+      summary.deletedLabels += (
+        result.deletedConfiguredLabels.length
+        + result.deletedGithubDefaultLabels.length
+        + result.deletedMissingLabels.length
+      );
+      summary.replacedLabels += result.labelReplacements.length;
+
+      return summary;
+    },
+    {
+      repositoriesAffected: 0,
+      createdLabels: 0,
+      deletedLabels: 0,
+      replacedLabels: 0,
+    },
+  );
+}
+
 async function githubRequest(token, method, apiPath, body) {
   const response = await fetch(`https://api.github.com${apiPath}`, {
     method,
@@ -616,20 +658,27 @@ async function main() {
     results.push(result);
   }
 
+  const changelogSummary = summarizeChangelogResults(results);
+
   await writeChangelog({
     workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
     dryRun,
-    introLines: [
-      dryRun ? "Preview mode: true; no label changes were applied" : null,
-      usingTargetRepositoryOverride
-        ? "Repository selection: workflow dispatch config override"
-        : `Repository filter mode: ${activeFilterMode}`,
-      `Processed repositories: ${repositories.length}`,
-      `Deleted-label config entries: ${deletedLabels.length}`,
-      `Label replacements: ${labelReplacements.length}`,
-      `Delete GitHub default labels: ${deleteGithubDefaultLabels}`,
-      `Delete missing labels: ${deleteMissing}`,
-    ].filter((line) => line !== null),
+    summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+      `Generated On: ${generatedDate}`,
+      `Workflow Run: ${workflowRun}`,
+      `Actor: ${metadata.actor || "Unavailable"}`,
+      `Test Mode: ${formatDisplayBoolean(dryRun)}`,
+      `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
+      `Default Label Delete Mode: ${formatDisplayBoolean(deleteGithubDefaultLabels)}`,
+      `Unlisted Label Delete Mode: ${formatDisplayBoolean(deleteMissing)}`,
+      `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
+      `Created Labels: ${changelogSummary.createdLabels}`,
+      `Deleted Labels: ${changelogSummary.deletedLabels}`,
+      `Replaced Labels: ${changelogSummary.replacedLabels}`,
+      changelogSummary.replacedLabels > 0 && labelReplacements.length > 0
+        ? `Specified Replacements: ${formatSpecifiedReplacements(labelReplacements)}`
+        : null,
+    ],
     sections: results.map(renderLabelSyncSection),
   });
 }
