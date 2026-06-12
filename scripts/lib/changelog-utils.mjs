@@ -37,7 +37,7 @@ function renderList(items, renderItem) {
 }
 
 function parseGeneratedDate(content, fallbackDate) {
-  const generatedOnMatch = content.match(/^Generated On: (\d{4}-\d{2}-\d{2})$/m);
+  const generatedOnMatch = content.match(/^Generated On: (\d{4}-\d{2}-\d{2})\s*$/m);
   if (generatedOnMatch) {
     return generatedOnMatch[1];
   }
@@ -46,7 +46,7 @@ function parseGeneratedDate(content, fallbackDate) {
 }
 
 function parseGeneratedTimestamp(content) {
-  return content.match(/^- Generated: ([^\n]+)$/m)?.[1] ?? content.match(/^Generated On: ([^\n]+)$/m)?.[1] ?? "";
+  return content.match(/^- Generated: ([^\n]+)$/m)?.[1] ?? content.match(/^Generated On: ([^\n]+?)\s*$/m)?.[1] ?? "";
 }
 
 function parseWorkflowName(content, fallbackFileName) {
@@ -186,7 +186,7 @@ export async function writeChangelog({ workflowName, dryRun = false, introLines 
   const lines = renderedSummaryLines ? [
     `# ${workflowName} Changelog`,
     "",
-    ...renderedSummaryLines.filter((line) => line !== null),
+    ...renderedSummaryLines.filter((line) => line !== null).map((line) => `${line}  `),
     "",
     "## Changed Repositories",
     "",
