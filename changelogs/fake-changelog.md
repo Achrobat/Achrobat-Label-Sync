@@ -1,15 +1,16 @@
 # Org-Label-Sync Fake Changelog
 
-- Generated: 2026-06-07T08:31:08Z
-- Workflow run: [Org-Label-Sync Fake #19](https://github.com/Achrobat/Achrobat-Label-Sync/actions/runs/27087423740)
-- Actor: UltraProdigy
-- Preview mode: true; no label changes were applied
-- Repository filter mode: blacklist
-- Processed repositories: 7
-- Deleted-label config entries: 2
-- Label replacements: 0
-- Delete GitHub default labels: true
-- Delete missing labels: false
+Generated On: 2026-06-12
+Workflow Run: [Org-Label-Sync Fake #20](https://github.com/Achrobat/Achrobat-Label-Sync/actions/runs/27446173161)
+Actor: UltraProdigy
+Test Mode: True
+Repo Filter Mode: Blacklist
+Default Label Delete Mode: True
+Unlisted Label Delete Mode: False
+Repositories Affected: 7
+Created Labels: 7
+Deleted Labels: 0
+Replaced Labels: 0
 
 ## Changed Repositories
 
