@@ -43,6 +43,41 @@ function parseRepositoryFilter(value) {
   );
 }
 
+function formatDisplayBoolean(value) {
+  return value ? "True" : "False";
+}
+
+function formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode) {
+  if (usingTargetRepositoryOverride) {
+    return "Custom";
+  }
+
+  return activeFilterMode === "whitelist" ? "Whitelist" : "Blacklist";
+}
+
+function summarizeChangelogResults(results) {
+  return results.reduce(
+    (summary, result) => {
+      const removedIssues = result.removedIssues.length;
+      const removedPullRequests = result.removedPullRequests.length;
+
+      if (removedIssues > 0 || removedPullRequests > 0) {
+        summary.repositoriesAffected += 1;
+      }
+
+      summary.removedFromIssues += removedIssues;
+      summary.removedFromPullRequests += removedPullRequests;
+
+      return summary;
+    },
+    {
+      repositoriesAffected: 0,
+      removedFromIssues: 0,
+      removedFromPullRequests: 0,
+    },
+  );
+}
+
 function validateRunInputs() {
   assert(labelName, "LABEL_NAME is required.");
   assert(runOnIssues !== undefined, "RUN_ON_ISSUES must be provided.");
@@ -303,19 +338,26 @@ async function main() {
     `Completed label removal. Total removed from issues=${totalRemovedIssues}, total removed from pull requests=${totalRemovedPullRequests}.`,
   );
 
+  const changelogSummary = summarizeChangelogResults(results);
+
   await writeChangelog({
     workflowName: dryRun ? "Remove-Labels Fake" : "Remove-Labels",
     dryRun,
-    introLines: [
-      dryRun ? "Preview mode: true; no label removals were applied" : null,
-      usingTargetRepositoryOverride
-        ? "Repository selection: workflow dispatch config override"
-        : `Repository filter mode: ${activeFilterMode}`,
-      `Processed repositories: ${repositories.length}`,
-      `Requested label: ${labelName}`,
-      `Issue scope: ${runOnIssues ? (targetOnlyClosedIssues ? "closed issues only" : "all issues") : "disabled"}`,
-      `Pull request scope: ${runOnPullRequests ? (targetOnlyClosedPullRequests ? "closed pull requests only" : "all pull requests") : "disabled"}`,
-    ].filter((line) => line !== null),
+    summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+      `Generated On: ${generatedDate}`,
+      `Workflow Run: ${workflowRun}`,
+      `Actor: ${metadata.actor || "Unavailable"}`,
+      `Test Mode: ${formatDisplayBoolean(dryRun)}`,
+      `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
+      `Label Removed: ${labelName}`,
+      `Run On Issues: ${formatDisplayBoolean(runOnIssues)}`,
+      `Target Only Closed Issues: ${formatDisplayBoolean(targetOnlyClosedIssues)}`,
+      `Run On Pull Requests: ${formatDisplayBoolean(runOnPullRequests)}`,
+      `Target Only Closed Pull Requests: ${formatDisplayBoolean(targetOnlyClosedPullRequests)}`,
+      `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
+      `Removed From Issues: ${changelogSummary.removedFromIssues}`,
+      `Removed From Pull Requests: ${changelogSummary.removedFromPullRequests}`,
+    ],
     sections: results.map(renderRemoveLabelsSection),
   });
 }

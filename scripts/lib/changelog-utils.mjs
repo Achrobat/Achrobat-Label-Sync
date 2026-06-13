@@ -36,8 +36,22 @@ function renderList(items, renderItem) {
   return items.map((item) => `- ${renderItem(item)}`).join("\n");
 }
 
+function renderSummaryLine(line) {
+  const separatorIndex = line.indexOf(":");
+
+  if (separatorIndex === -1) {
+    return `- ${line}`;
+  }
+
+  const label = line.slice(0, separatorIndex + 1);
+  const value = line.slice(separatorIndex + 1);
+  return `- **${label}**${value}`;
+}
+
 function parseGeneratedDate(content, fallbackDate) {
-  const generatedOnMatch = content.match(/^Generated On: (\d{4}-\d{2}-\d{2})\s*$/m);
+  const generatedOnMatch =
+    content.match(/^- \*\*Generated On:\*\* (\d{4}-\d{2}-\d{2})\s*$/m)
+    ?? content.match(/^Generated On: (\d{4}-\d{2}-\d{2})\s*$/m);
   if (generatedOnMatch) {
     return generatedOnMatch[1];
   }
@@ -46,7 +60,10 @@ function parseGeneratedDate(content, fallbackDate) {
 }
 
 function parseGeneratedTimestamp(content) {
-  return content.match(/^- Generated: ([^\n]+)$/m)?.[1] ?? content.match(/^Generated On: ([^\n]+?)\s*$/m)?.[1] ?? "";
+  return content.match(/^- Generated: ([^\n]+)$/m)?.[1]
+    ?? content.match(/^- \*\*Generated On:\*\* ([^\n]+?)\s*$/m)?.[1]
+    ?? content.match(/^Generated On: ([^\n]+?)\s*$/m)?.[1]
+    ?? "";
 }
 
 function parseWorkflowName(content, fallbackFileName) {
@@ -186,7 +203,7 @@ export async function writeChangelog({ workflowName, dryRun = false, introLines 
   const lines = renderedSummaryLines ? [
     `# ${workflowName} Changelog`,
     "",
-    ...renderedSummaryLines.filter((line) => line !== null).map((line) => `${line}  `),
+    ...renderedSummaryLines.filter((line) => line !== null).map(renderSummaryLine),
     "",
     "## Changed Repositories",
     "",
