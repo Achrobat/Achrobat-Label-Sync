@@ -16,7 +16,8 @@ Features:
 - Rename labels across repositories while preserving issue and pull request assignments where possible
 - Targeted soft label removal from issues and pull requests across selected repositories
 - Support whitelist or blacklist repository selection
-- Write changelogs for real workflow changes and dry-run previews
+- Reset selected config files back to default unconfigured versions
+- Write changelogs to GitHub Actions workflow summaries for real workflow changes and dry-run previews
 
 ## How to setup
 
@@ -45,14 +46,16 @@ The configured source repository is always skipped by repository filtering. You 
 - `labels.jsonc` starts empty until labels are defined or synced from the source repository
 - `deleted-labels.jsonc` starts empty and is populated when managed labels are removed from the source repository
 - `repository-filter.jsonc` defaults to blacklist mode, which targets all discovered org repositories except listed exclusions
+- `Config-Reset` resets `repository-filter.jsonc` to empty whitelist mode, which targets no repositories until entries are added
 - GitHub default labels are pruned only when they exactly match `config/github-default-labels.jsonc`
 - Unmanaged label deletion is disabled unless `delete_missing` is enabled on `Org-Label-Sync`
 
 ## How to use the workflows
 
-This repository includes five GitHub Actions workflows:
+This repository includes six GitHub Actions workflows:
 
 - `Config-Label_Sync`
+- `Config-Reset`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
 - `Org-Label-Sync`
@@ -94,7 +97,7 @@ Inputs:
 
 `label_replacements` is meant for label renames. The old label must exist in `config/deleted-labels.jsonc`, and the new label must exist in `config/labels.jsonc`.
 
-When changes are made, the workflow writes the newest real changelog to `changelogs/latest-changelog.md`. Before writing a new real changelog, any existing real changelog directly under `changelogs/` is moved to `changelogs/History/` with a `YYYY-MM-DD-###-workflow-name.md` filename. Dry runs always write to `changelogs/fake-changelog.md`, overwriting the previous dry-run preview.
+When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. Workflow summaries are retained according to GitHub Actions run retention settings.
 
 ### Remove-Labels
 
@@ -110,7 +113,21 @@ Inputs:
 - `label_name`: exact label name to remove
 - `repositories`: comma-separated override for the target repository list
 
-Like `Org-Label-Sync`, the newest real changelog is written to `changelogs/latest-changelog.md`, older real changelogs are archived in `changelogs/History/`, and dry-run previews are written to `changelogs/fake-changelog.md`.
+Like `Org-Label-Sync`, changelog Markdown is written directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output.
+
+### Config-Reset
+
+Run `Config-Reset` manually when you want to restore selected config files to their default unconfigured versions.
+
+Inputs:
+
+- `reset_deleted_labels`: reset `config/deleted-labels.jsonc` to an empty deleted-label list
+- `reset_github_default_labels`: reset `config/github-default-labels.jsonc` to the standard GitHub default label specs
+- `reset_labels`: reset `config/labels.jsonc` to an empty managed-label list
+- `reset_repository_filter`: reset `config/repository-filter.jsonc` to empty whitelist mode
+- `confirmation`: must be exactly `CONFIRM` (will fail otherwise)
+
+`reset_labels` clears the managed label source of truth. The reset commit is made by `github-actions[bot]`, so `Reverse-Config-Label-Sync` ignores it.
 
 ### Validate-Configs
 

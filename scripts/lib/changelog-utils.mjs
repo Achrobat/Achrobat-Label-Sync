@@ -1,24 +1,9 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
-const fakeChangelogFileName = "fake-changelog.md";
-const latestChangelogFileName = "latest-changelog.md";
-const historyDirectoryName = "History";
 const defaultChangelogTimeZone = "America/New_York";
 
 function getChangelogTimeZone() {
   return process.env.CHANGELOG_TIME_ZONE || defaultChangelogTimeZone;
-}
-
-function slugify(value) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "workflow";
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function formatUtcTimestamp(date) {
@@ -65,129 +50,6 @@ function renderSummaryLine(line) {
   return `- **${label}**${value}`;
 }
 
-function parseGeneratedDate(content, fallbackDate) {
-  const generatedOnMatch =
-    content.match(/^- \*\*Generated On:\*\* (\d{4}-\d{2}-\d{2})\s*$/m)
-    ?? content.match(/^Generated On: (\d{4}-\d{2}-\d{2})\s*$/m);
-  if (generatedOnMatch) {
-    return generatedOnMatch[1];
-  }
-
-  return content.match(/^- Generated: (\d{4}-\d{2}-\d{2})T/m)?.[1] ?? fallbackDate;
-}
-
-function parseGeneratedTimestamp(content) {
-  return content.match(/^- Generated: ([^\n]+)$/m)?.[1]
-    ?? content.match(/^- \*\*Generated On:\*\* ([^\n]+?)\s*$/m)?.[1]
-    ?? content.match(/^Generated On: ([^\n]+?)\s*$/m)?.[1]
-    ?? "";
-}
-
-function parseWorkflowName(content, fallbackFileName) {
-  const titleMatch = content.match(/^# (.+?) Changelog$/m);
-  return slugify(titleMatch?.[1] ?? path.basename(fallbackFileName, ".md"));
-}
-
-async function getNextHistorySequence(historyDir, datePath, workflowSlug) {
-  let maxSequence = 0;
-
-  try {
-    const entries = await fs.readdir(historyDir);
-    const sequencePattern = new RegExp(
-      `^${escapeRegExp(datePath)}-(\\d+)-${escapeRegExp(workflowSlug)}\\.md$`,
-    );
-
-    for (const entry of entries) {
-      const match = entry.match(sequencePattern);
-      if (match) {
-        maxSequence = Math.max(maxSequence, Number.parseInt(match[1], 10));
-      }
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  return maxSequence + 1;
-}
-
-async function getAvailableHistoryPath(historyDir, datePath, workflowSlug) {
-  let sequence = await getNextHistorySequence(historyDir, datePath, workflowSlug);
-
-  while (true) {
-    const sequenceText = String(sequence).padStart(3, "0");
-    const historyPath = path.join(historyDir, `${datePath}-${sequenceText}-${workflowSlug}.md`);
-
-    try {
-      await fs.access(historyPath);
-      sequence += 1;
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return historyPath;
-      }
-
-      throw error;
-    }
-  }
-}
-
-async function archiveExistingChangelogs(changelogDir, fallbackDate) {
-  const historyDir = path.join(changelogDir, historyDirectoryName);
-  let entries;
-
-  try {
-    entries = await fs.readdir(changelogDir, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return;
-    }
-
-    throw error;
-  }
-
-  const changelogEntries = entries.filter(
-    (entry) =>
-      entry.isFile() &&
-      entry.name.endsWith(".md") &&
-      entry.name !== fakeChangelogFileName &&
-      entry.name !== "README.md",
-  );
-
-  if (changelogEntries.length === 0) {
-    return;
-  }
-
-  await fs.mkdir(historyDir, { recursive: true });
-
-  const changelogs = [];
-
-  for (const entry of changelogEntries) {
-    const sourcePath = path.join(changelogDir, entry.name);
-    const content = await fs.readFile(sourcePath, "utf8");
-    changelogs.push({
-      content,
-      entryName: entry.name,
-      generatedTimestamp: parseGeneratedTimestamp(content),
-      sourcePath,
-    });
-  }
-
-  changelogs.sort(
-    (left, right) =>
-      left.generatedTimestamp.localeCompare(right.generatedTimestamp) || left.entryName.localeCompare(right.entryName),
-  );
-
-  for (const changelog of changelogs) {
-    const datePath = parseGeneratedDate(changelog.content, fallbackDate);
-    const workflowSlug = parseWorkflowName(changelog.content, changelog.entryName);
-    const historyPath = await getAvailableHistoryPath(historyDir, datePath, workflowSlug);
-
-    await fs.rename(changelog.sourcePath, historyPath);
-    console.log(`Archived changelog to ${path.relative(process.cwd(), historyPath)}`);
-  }
-}
-
 export function getWorkflowMetadata(workflowName) {
   return {
     workflowName,
@@ -199,11 +61,11 @@ export function getWorkflowMetadata(workflowName) {
   };
 }
 
-export async function writeChangelog({ workflowName, dryRun = false, introLines = [], summaryLines = null, sections }) {
+export async function writeChangelog({ workflowName, introLines = [], summaryLines = null, sections }) {
   const changedSections = sections.filter((section) => section.hasChanges);
 
   if (changedSections.length === 0) {
-    console.log("No repository changes detected; changelog was not written.");
+    console.log("No repository changes detected; changelog was not written to the workflow summary.");
     return null;
   }
 
@@ -211,9 +73,6 @@ export async function writeChangelog({ workflowName, dryRun = false, introLines 
   const metadata = getWorkflowMetadata(workflowName);
   const timestamp = formatUtcTimestamp(now);
   const generatedDate = formatDatePath(now);
-  const fileName = dryRun ? fakeChangelogFileName : latestChangelogFileName;
-  const changelogDir = path.join(process.cwd(), "changelogs");
-  const changelogPath = path.join(changelogDir, fileName);
   const workflowRun = formatWorkflowRunLink(metadata);
   const renderedSummaryLines = typeof summaryLines === "function"
     ? summaryLines({ generatedDate, metadata, workflowRun })
@@ -245,15 +104,19 @@ export async function writeChangelog({ workflowName, dryRun = false, introLines 
     lines.push("");
   }
 
-  await fs.mkdir(changelogDir, { recursive: true });
-  if (!dryRun) {
-    await archiveExistingChangelogs(changelogDir, formatDatePath(now));
+  const changelog = `${lines.join("\n")}\n`;
+  const stepSummaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+  if (!stepSummaryPath) {
+    console.log("GITHUB_STEP_SUMMARY is not set; changelog follows.");
+    console.log(changelog);
+    return null;
   }
 
-  await fs.writeFile(changelogPath, `${lines.join("\n")}\n`, "utf8");
+  await fs.appendFile(stepSummaryPath, changelog, "utf8");
 
-  console.log(`Wrote changelog to ${path.relative(process.cwd(), changelogPath)}`);
-  return changelogPath;
+  console.log("Wrote changelog to the GitHub Actions job summary.");
+  return stepSummaryPath;
 }
 
 export function renderLabelSyncSection(result) {

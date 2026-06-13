@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "[TEST MODE] Preview label removals without applying them. Generates fake changelog."
+        description: "[TEST MODE] Preview label removals without applying them. Writes a preview changelog to the workflow summary."
         required: false
         type: boolean
         default: false
@@ -38,7 +38,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   remove-labels:
@@ -94,23 +94,3 @@ jobs:
           LABEL_NAME: ${{ inputs.label_name }}
           TARGET_REPOSITORIES: ${{ inputs.repositories }}
         run: node scripts/remove-labels.mjs
-
-      - name: Commit changelog
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            changelog_path="changelogs/fake-changelog.md"
-            commit_message="Remove-Labels Changelog [Fake]"
-          else
-            changelog_path="changelogs"
-            commit_message="Remove-Labels Changelog"
-          fi
-          if [ -z "$(git status --porcelain -- "$changelog_path")" ]; then
-            echo "No changelog changes detected."
-            exit 0
-          fi
-          git add "$changelog_path"
-          git commit -m "$commit_message"
-          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"

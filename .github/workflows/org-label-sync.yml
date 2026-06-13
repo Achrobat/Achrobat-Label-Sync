@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "[TEST MODE] Preview label changes without applying them. Generates fake changelog."
+        description: "[TEST MODE] Preview label changes without applying them. Writes a preview changelog to the workflow summary."
         required: false
         type: boolean
         default: false
@@ -88,23 +88,3 @@ jobs:
           TARGET_REPOSITORIES: ${{ inputs.repositories }}
           LABEL_REPLACEMENTS: ${{ inputs.label_replacements }}
         run: node scripts/sync-labels.mjs
-
-      - name: Commit changelog
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            changelog_path="changelogs/fake-changelog.md"
-            commit_message="Org-Label-Sync Changelog [Fake]"
-          else
-            changelog_path="changelogs"
-            commit_message="Org-Label-Sync Changelog"
-          fi
-          if [ -z "$(git status --porcelain -- "$changelog_path")" ]; then
-            echo "No changelog changes detected."
-            exit 0
-          fi
-          git add "$changelog_path"
-          git commit -m "$commit_message"
-          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"
