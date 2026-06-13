@@ -11,6 +11,11 @@
 // ]
 [
   {
+    "name": "Another New Label!! For ALl!!",
+    "color": "f92106",
+    "description": ""
+  },
+  {
     "name": "Enhancement",
     "color": "f76cc5",
     "description": "Enhance me good sir"
@@ -21,8 +26,38 @@
     "description": "Yuhh"
   },
   {
+    "name": "Exclusive Label For Cool People",
+    "color": "15a121",
+    "description": ""
+  },
+  {
+    "name": "New Label For All!",
+    "color": "a34950",
+    "description": "Yep"
+  },
+  {
+    "name": "New Label for all??? Is it?",
+    "color": "aec0f9",
+    "description": ""
+  },
+  {
     "name": "Replacement Test V2",
     "color": "2d8fa5",
     "description": ""
+  },
+  {
+    "name": "Six Seven",
+    "color": "f6784e",
+    "description": ""
+  },
+  {
+    "name": "TL2",
+    "color": "69e7bb",
+    "description": "TL2"
+  },
+  {
+    "name": "TL3",
+    "color": "272f64",
+    "description": "TL3"
   }
 ]
