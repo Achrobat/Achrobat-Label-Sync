@@ -1,12 +1,12 @@
 # Org-Label-Sync Fake Changelog
 
 - **Generated On:** 2026-06-12
-- **Workflow Run:** [Org-Label-Sync Fake #25](https://github.com/Achrobat/Achrobat-Label-Sync/actions/runs/27453949983)
+- **Workflow Run:** [Org-Label-Sync Fake #26](https://github.com/Achrobat/Achrobat-Label-Sync/actions/runs/27454011641)
 - **Actor:** UltraProdigy
 - **Test Mode:** True
 - **Repo Filter Mode:** Blacklist
 - **Default Label Delete Mode:** True
-- **Unlisted Label Delete Mode:** True
+- **Unlisted Label Delete Mode:** False
 - **Repositories Affected:** 7
 - **Created Labels:** 14
 - **Deleted Labels:** 49
