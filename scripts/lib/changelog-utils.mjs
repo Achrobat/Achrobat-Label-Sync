@@ -307,7 +307,7 @@ export function renderLabelSyncSection(result) {
 
   const deletedConfigured = renderList(
     result.deletedConfiguredLabels,
-    (label) => `Deleted configured removed label \`${label.name}\``,
+    (label) => `Deleted \`${label.name}\``,
   );
   if (deletedConfigured) {
     lines.push("Deleted labels from deleted-labels config:");

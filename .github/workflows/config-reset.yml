@@ -1,0 +1,82 @@
+name: Config-Reset
+
+on:
+  workflow_dispatch:
+    inputs:
+      reset_deleted_labels:
+        description: "Reset config/deleted-labels.jsonc"
+        required: true
+        type: boolean
+        default: false
+      reset_github_default_labels:
+        description: "Reset config/github-default-labels.jsonc"
+        required: true
+        type: boolean
+        default: false
+      reset_labels:
+        description: "Reset config/labels.jsonc"
+        required: true
+        type: boolean
+        default: false
+      reset_repository_filter:
+        description: "Reset config/repository-filter.jsonc to empty whitelist mode"
+        required: true
+        type: boolean
+        default: false
+      confirmation:
+        description: 'Before running this workflow, please double check your selected settings and type "CONFIRM" into the box.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  reset-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check confirmation
+        if: ${{ inputs.confirmation != 'CONFIRM' }}
+        run: |
+          echo 'Confirmation must be exactly CONFIRM.'
+          exit 1
+
+      - name: Check selected configs
+        if: ${{ !inputs.reset_deleted_labels && !inputs.reset_github_default_labels && !inputs.reset_labels && !inputs.reset_repository_filter }}
+        run: |
+          echo 'Select at least one config file to reset.'
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reset selected config files
+        env:
+          RESET_DELETED_LABELS: ${{ inputs.reset_deleted_labels }}
+          RESET_GITHUB_DEFAULT_LABELS: ${{ inputs.reset_github_default_labels }}
+          RESET_LABELS: ${{ inputs.reset_labels }}
+          RESET_REPOSITORY_FILTER: ${{ inputs.reset_repository_filter }}
+        run: node scripts/reset-configs.mjs
+
+      - name: Validate configuration
+        run: node scripts/validate-configs.mjs
+
+      - name: Commit config resets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- config/deleted-labels.jsonc config/github-default-labels.jsonc config/labels.jsonc config/repository-filter.jsonc; then
+            echo "No selected config changes detected."
+            exit 0
+          fi
+          git add config/deleted-labels.jsonc config/github-default-labels.jsonc config/labels.jsonc config/repository-filter.jsonc
+          git commit -m "Reset selected config files"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
