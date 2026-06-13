@@ -4,6 +4,11 @@ import path from "node:path";
 const fakeChangelogFileName = "fake-changelog.md";
 const latestChangelogFileName = "latest-changelog.md";
 const historyDirectoryName = "History";
+const defaultChangelogTimeZone = "America/New_York";
+
+function getChangelogTimeZone() {
+  return process.env.CHANGELOG_TIME_ZONE || defaultChangelogTimeZone;
+}
 
 function slugify(value) {
   return value
@@ -12,12 +17,24 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "") || "workflow";
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function formatUtcTimestamp(date) {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function formatDatePath(date) {
-  return date.toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: getChangelogTimeZone(),
+    year: "numeric",
+  }).formatToParts(date);
+  const partValues = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${partValues.year}-${partValues.month}-${partValues.day}`;
 }
 
 function formatWorkflowRunLink(metadata) {
@@ -71,12 +88,14 @@ function parseWorkflowName(content, fallbackFileName) {
   return slugify(titleMatch?.[1] ?? path.basename(fallbackFileName, ".md"));
 }
 
-async function getNextHistorySequence(historyDir, datePath) {
+async function getNextHistorySequence(historyDir, datePath, workflowSlug) {
   let maxSequence = 0;
 
   try {
     const entries = await fs.readdir(historyDir);
-    const sequencePattern = new RegExp(`^${datePath}-(\\d+)-`);
+    const sequencePattern = new RegExp(
+      `^${escapeRegExp(datePath)}-(\\d+)-${escapeRegExp(workflowSlug)}\\.md$`,
+    );
 
     for (const entry of entries) {
       const match = entry.match(sequencePattern);
@@ -94,7 +113,7 @@ async function getNextHistorySequence(historyDir, datePath) {
 }
 
 async function getAvailableHistoryPath(historyDir, datePath, workflowSlug) {
-  let sequence = await getNextHistorySequence(historyDir, datePath);
+  let sequence = await getNextHistorySequence(historyDir, datePath, workflowSlug);
 
   while (true) {
     const sequenceText = String(sequence).padStart(3, "0");
