@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       reset_repository_filter:
-        description: "Reset config/repository-filter.jsonc to empty whitelist mode"
+        description: "Reset config/repository-filter.jsonc"
         required: true
         type: boolean
         default: false
