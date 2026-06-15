@@ -15,6 +15,7 @@ Features:
 - Optionally delete unmanaged labels during org sync runs
 - Rename labels across repositories while preserving issue and pull request assignments where possible
 - Targeted soft label removal from issues and pull requests across selected repositories
+- Inventory labels currently present across selected repositories
 - Support whitelist or blacklist repository selection
 - Reset selected config files back to default unconfigured versions
 - Write changelogs to GitHub Actions workflow summaries for real workflow changes and dry-run previews
@@ -52,10 +53,11 @@ The configured source repository is always skipped by repository filtering. You 
 
 ## How to use the workflows
 
-This repository includes six GitHub Actions workflows:
+This repository includes seven GitHub Actions workflows:
 
 - `Config-Label_Sync`
 - `Config-Reset`
+- `Inventory-Labels`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
 - `Org-Label-Sync`
@@ -114,6 +116,16 @@ Inputs:
 - `repositories`: comma-separated override for the target repository list
 
 Like `Org-Label-Sync`, changelog Markdown is written directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output.
+
+### Inventory-Labels
+
+Run `Inventory-Labels` manually when you want an inventory of labels currently present on selected repositories.
+
+Inputs:
+
+- `exclude_configured_labels`: exclude labels whose name, color, and description exactly match a label in `config/labels.jsonc`
+- `list_similarities`: append a section listing exact label specs shared by two or more selected repositories
+- `repositories`: comma-separated override for the target repository list
 
 ### Config-Reset
 
