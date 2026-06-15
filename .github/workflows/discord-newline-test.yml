@@ -21,26 +21,22 @@ jobs:
             echo "DISCORD_WEBHOOK_URL secret not set, skipping notification"
             exit 0
           fi
-
+          timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           payload=$(jq -n \
-            --arg title "Daily Build Failure" \
-            --arg url "$RUN_URL" \
-            --arg run "$RUN_NUMBER" \
-            --arg build "$BUILD_ID" \
+            --arg build "${BUILD_ID:-unknown}" \
+            --arg run_url "$RUN_URL" \
+            --arg run_number "$RUN_NUMBER" \
+            --arg ts "$timestamp" \
             '{
-              username: "GTNH Daily Build",
               embeds: [{
-                title: $title,
-                url: $url,
-                color: 15158332,
+                title: "Daily Build Failure",
+                color: 15548997,
                 fields: [
-                  {name: "Build", value: $build, inline: true},
-                  {name: "Run", value: ("#" + $run), inline: true}
+                  { name: "Build", value: $build, inline: true },
+                  { name: "Run", value: ("[#" + $run_number + "](" + $run_url + ")"), inline: true }
                 ],
-                footer: {text: "GitHub Actions"},
-                timestamp: now | todateiso8601
+                footer: { text: "GitHub Actions" },
+                timestamp: $ts
               }]
             }')
-
-          echo "$payload"
           curl -fsS -X POST -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
