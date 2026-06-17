@@ -81,6 +81,20 @@ function renderLabel(label) {
   return `\`${label.name}\` (#${label.color})${description}`;
 }
 
+function renderLabelDetails(label) {
+  const lines = [
+    `### \`${label.name}\``,
+    "",
+    `Color: \`#${label.color}\``,
+  ];
+
+  if (label.description) {
+    lines.push(`Description: ${label.description}`);
+  }
+
+  return lines;
+}
+
 export function filterConfiguredLabels(labels, configuredLabels) {
   const configuredKeys = new Set(configuredLabels.map((label) => labelSpecKey(label)));
   return labels
@@ -136,33 +150,34 @@ export function renderInventorySummary({
   sharedLabelGroups,
 }) {
   const labelsListed = results.reduce((count, result) => count + result.labels.length, 0);
+  const summaryLines = [
+    `Generated On: ${generatedDate}`,
+    `Workflow Run: ${workflowRun}`,
+    `Actor: ${actor || "Unavailable"}`,
+    `Repo Filter Mode: ${repoFilterMode}`,
+    `Exclude Configured Labels: ${formatDisplayBoolean(excludeConfigured)}`,
+    `List Similarities: ${formatDisplayBoolean(includeSimilarities)}`,
+    `Repositories Inventoried: ${results.length}`,
+    `Labels Listed: ${labelsListed}`,
+    includeSimilarities ? `Shared Label Count: ${sharedLabelGroups.length}` : null,
+  ].filter((line) => line !== null);
+
   const lines = [
     `# ${workflowName}`,
     "",
-    ...[
-      `Generated On: ${generatedDate}`,
-      `Workflow Run: ${workflowRun}`,
-      `Actor: ${actor || "Unavailable"}`,
-      `Repo Filter Mode: ${repoFilterMode}`,
-      `Exclude Configured Labels: ${formatDisplayBoolean(excludeConfigured)}`,
-      `List Similarities: ${formatDisplayBoolean(includeSimilarities)}`,
-      `Repositories Inventoried: ${results.length}`,
-      `Labels Listed: ${labelsListed}`,
-    ].map(renderSummaryLine),
+    ...summaryLines.map(renderSummaryLine),
     "",
     "## Repository Label Inventory",
     "",
   ];
 
   for (const result of results) {
-    lines.push(`### ${result.repository}`);
-    lines.push("");
-
     if (result.labels.length === 0) {
-      lines.push("- No labels matched the selected inventory options.");
-      lines.push("");
       continue;
     }
+
+    lines.push(`### ${result.repository}`);
+    lines.push("");
 
     for (const label of result.labels) {
       lines.push(`- ${renderLabel(label)}`);
@@ -180,11 +195,16 @@ export function renderInventorySummary({
       lines.push("");
     } else {
       for (const group of sharedLabelGroups) {
-        lines.push(`- ${renderLabel(group.label)}`);
-        lines.push(`  Repos: ${group.repositories.join(", ")}`);
-      }
+        lines.push(...renderLabelDetails(group.label));
+        lines.push("");
+        lines.push("Repositories with this exact label:");
 
-      lines.push("");
+        for (const repository of group.repositories) {
+          lines.push(`- ${repository}`);
+        }
+
+        lines.push("");
+      }
     }
   }
 

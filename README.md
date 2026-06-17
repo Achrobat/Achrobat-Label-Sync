@@ -124,7 +124,7 @@ Run `Inventory-Labels` manually when you want an inventory of labels currently p
 Inputs:
 
 - `exclude_configured_labels`: exclude labels whose name, color, and description exactly match a label in `config/labels.jsonc`
-- `list_similarities`: append a section listing exact label specs shared by two or more selected repositories
+- `list_similarities`: append a shared-label count and a section listing exact label specs shared by two or more selected repositories, with each matching repository listed under the label
 - `repositories`: comma-separated override for the target repository list
 
 ### Config-Reset
