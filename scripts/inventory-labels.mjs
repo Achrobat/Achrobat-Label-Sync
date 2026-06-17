@@ -14,7 +14,9 @@ import {
   validateRepositoryFilter,
 } from "./lib/config-validation.mjs";
 import {
+  filterEligibleRepositories,
   filterRepositories,
+  formatSkippedRepository,
   isSourceRepository,
   repositoryAliases,
   repositoryMatchesEntries,
@@ -152,6 +154,8 @@ export function renderInventorySummary({
   listSimilarities: includeSimilarities,
   results,
   sharedLabelGroups,
+  skippedRepositories = [],
+  failure = null,
 }) {
   const labelsListed = results.reduce((count, result) => count + result.labels.length, 0);
   const summaryLines = [
@@ -162,6 +166,7 @@ export function renderInventorySummary({
     `Exclude Configured Labels: ${formatDisplayBoolean(excludeConfigured)}`,
     `List Similarities: ${formatDisplayBoolean(includeSimilarities)}`,
     `Repositories Inventoried: ${results.length}`,
+    `Repositories Skipped: ${skippedRepositories.length}`,
     `Labels Listed: ${labelsListed}`,
     includeSimilarities ? `Shared Label Count: ${sharedLabelGroups.length}` : null,
   ].filter((line) => line !== null);
@@ -210,6 +215,20 @@ export function renderInventorySummary({
         lines.push("");
       }
     }
+  }
+
+  if (skippedRepositories.length > 0) {
+    lines.push("## Skipped Repositories");
+    lines.push("");
+    lines.push(...skippedRepositories.map((skippedRepository) => `- ${formatSkippedRepository(skippedRepository)}`));
+    lines.push("");
+  }
+
+  if (failure) {
+    lines.push("## Workflow Failure");
+    lines.push("");
+    lines.push(`- ${failure.message ?? String(failure)}`);
+    lines.push("");
   }
 
   return `${lines.join("\n")}\n`;
@@ -358,7 +377,7 @@ async function main() {
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
-  const repositories = usingTargetRepositoryOverride
+  const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, properties.organization, properties.sourceRepository)
     : filterRepositories(
       discoveredRepositories,
@@ -366,60 +385,84 @@ async function main() {
       repositoryFilter,
       properties.sourceRepository,
     );
+  const { repositories, skippedRepositories } = filterEligibleRepositories(
+    selectedRepositories,
+    { orgName: properties.organization, requireWriteAccess: false },
+  );
 
   if (usingTargetRepositoryOverride) {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} selected by workflow repository override.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${selectedRepositories.length} selected by workflow repository override.`,
     );
   } else {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} remain after repository-filter processing.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${selectedRepositories.length} remain after repository-filter processing.`,
     );
   }
+
+  if (skippedRepositories.length > 0) {
+    console.log(`Skipping ${skippedRepositories.length} archived repositories.`);
+  }
+
+  const results = [];
+  const writeRunSummary = async (failure = null) => {
+    const metadata = getWorkflowMetadata("Inventory-Labels");
+    const sharedLabelGroups = listSimilarities ? buildSharedLabelGroups(results) : [];
+    const markdown = renderInventorySummary({
+      workflowName: "Inventory-Labels",
+      generatedDate: formatDatePath(new Date()),
+      workflowRun: formatWorkflowRunLink(metadata),
+      actor: metadata.actor,
+      repoFilterMode: formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode),
+      excludeConfiguredLabels,
+      listSimilarities,
+      results,
+      sharedLabelGroups,
+      skippedRepositories,
+      failure,
+    });
+
+    await writeInventorySummary(markdown);
+  };
 
   if (repositories.length === 0) {
     console.log(
       usingTargetRepositoryOverride
-        ? "No repositories were selected by the workflow repository override. Nothing to inventory."
-        : "No repositories remain after repository-filter processing. Nothing to inventory.",
+        ? "No non-archived repositories were selected by the workflow repository override. Nothing to inventory."
+        : "No non-archived repositories remain after repository-filter processing. Nothing to inventory.",
     );
+    await writeRunSummary();
     return;
   }
 
-  const results = [];
+  let processingError = null;
 
-  for (const repository of repositories) {
-    console.log(`\nInventorying ${repository.full_name}`);
-    const labels = (await getAllLabels(token, repository.full_name))
-      .map((label) => normalizeLabelSpec(label))
-      .sort((left, right) => left.name.localeCompare(right.name));
-    const inventoryLabels = excludeConfiguredLabels
-      ? filterConfiguredLabels(labels, configuredLabels)
-      : labels;
+  try {
+    for (const repository of repositories) {
+      console.log(`\nInventorying ${repository.full_name}`);
+      const labels = (await getAllLabels(token, repository.full_name))
+        .map((label) => normalizeLabelSpec(label))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const inventoryLabels = excludeConfiguredLabels
+        ? filterConfiguredLabels(labels, configuredLabels)
+        : labels;
 
-    console.log(`  Found ${labels.length} labels; listing ${inventoryLabels.length}.`);
+      console.log(`  Found ${labels.length} labels; listing ${inventoryLabels.length}.`);
 
-    results.push({
-      repository: repository.full_name,
-      labels: inventoryLabels,
-    });
+      results.push({
+        repository: repository.full_name,
+        labels: inventoryLabels,
+      });
+    }
+  } catch (error) {
+    processingError = error;
+  } finally {
+    await writeRunSummary(processingError);
   }
 
-  const metadata = getWorkflowMetadata("Inventory-Labels");
-  const sharedLabelGroups = listSimilarities ? buildSharedLabelGroups(results) : [];
-  const markdown = renderInventorySummary({
-    workflowName: "Inventory-Labels",
-    generatedDate: formatDatePath(new Date()),
-    workflowRun: formatWorkflowRunLink(metadata),
-    actor: metadata.actor,
-    repoFilterMode: formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode),
-    excludeConfiguredLabels,
-    listSimilarities,
-    results,
-    sharedLabelGroups,
-  });
-
-  await writeInventorySummary(markdown);
+  if (processingError) {
+    throw processingError;
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

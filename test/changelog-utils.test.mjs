@@ -75,3 +75,64 @@ test("writeChangelog appends unchanged Markdown formatting to the GitHub step su
     await fs.rm(workspace, { force: true, recursive: true });
   }
 });
+
+test("writeChangelog includes skipped repositories and failure details when provided", async () => {
+  const originalCwd = process.cwd();
+  const originalSummaryPath = process.env.GITHUB_STEP_SUMMARY;
+  const originalGithubEnv = {
+    GITHUB_ACTOR: process.env.GITHUB_ACTOR,
+    GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY,
+    GITHUB_RUN_ID: process.env.GITHUB_RUN_ID,
+    GITHUB_RUN_NUMBER: process.env.GITHUB_RUN_NUMBER,
+    GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL,
+  };
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-changelog-"));
+  const summaryPath = path.join(workspace, "step-summary.md");
+
+  try {
+    process.chdir(workspace);
+    process.env.GITHUB_STEP_SUMMARY = summaryPath;
+    process.env.GITHUB_ACTOR = "octocat";
+    process.env.GITHUB_REPOSITORY = "example/labels";
+    process.env.GITHUB_RUN_ID = "12345";
+    process.env.GITHUB_RUN_NUMBER = "17";
+    process.env.GITHUB_SERVER_URL = "https://github.com";
+
+    await writeChangelog({
+      workflowName: "Org-Label-Sync",
+      summaryLines: () => [
+        "Generated On: 2026-06-17",
+        "Repositories Skipped: 2",
+      ],
+      skippedRepositories: [
+        { repository: "example/archive", reason: "archived" },
+        { repository: "example/read-only", reason: "read-only" },
+      ],
+      failure: new Error("PATCH /repos/example/broken/labels/bug failed with 500"),
+      sections: [
+        {
+          repository: "example/changed",
+          hasChanges: true,
+          lines: ["Created labels:", "- Created `bug` (#d73a4a)"],
+        },
+      ],
+    });
+
+    const summary = await fs.readFile(summaryPath, "utf8");
+    assert.match(summary, /## Changed Repositories\n\n### example\/changed\n\n/);
+    assert.match(summary, /## Skipped Repositories\n\n- `example\/archive` - archived\n- `example\/read-only` - read-only\n\n/);
+    assert.match(summary, /## Workflow Failure\n\n- PATCH \/repos\/example\/broken\/labels\/bug failed with 500\n$/);
+  } finally {
+    process.chdir(originalCwd);
+    process.env.GITHUB_STEP_SUMMARY = originalSummaryPath;
+    for (const [key, value] of Object.entries(originalGithubEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    await fs.rm(workspace, { force: true, recursive: true });
+  }
+});

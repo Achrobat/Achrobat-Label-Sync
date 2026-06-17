@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { formatSkippedRepository } from "./repository-selection.mjs";
 
 const defaultChangelogTimeZone = "America/New_York";
 
@@ -65,10 +66,17 @@ export function getWorkflowMetadata(workflowName) {
   };
 }
 
-export async function writeChangelog({ workflowName, introLines = [], summaryLines = null, sections }) {
+export async function writeChangelog({
+  workflowName,
+  introLines = [],
+  summaryLines = null,
+  sections,
+  skippedRepositories = [],
+  failure = null,
+}) {
   const changedSections = sections.filter((section) => section.hasChanges);
 
-  if (changedSections.length === 0) {
+  if (changedSections.length === 0 && skippedRepositories.length === 0 && !failure) {
     console.log("No repository changes detected; changelog was not written to the workflow summary.");
     return null;
   }
@@ -101,11 +109,29 @@ export async function writeChangelog({ workflowName, introLines = [], summaryLin
     "",
   ].filter((line) => line !== null);
 
-  for (const section of changedSections) {
-    lines.push(`### ${section.repository}`);
+  if (changedSections.length === 0) {
+    lines.push("- No repository changes detected.");
     lines.push("");
-    lines.push(...section.lines);
+  } else {
+    for (const section of changedSections) {
+      lines.push(`### ${section.repository}`);
+      lines.push("");
+      lines.push(...section.lines);
+      lines.push("");
+    }
+  }
+
+  if (skippedRepositories.length > 0) {
+    lines.push("## Skipped Repositories");
     lines.push("");
+    lines.push(...skippedRepositories.map((skippedRepository) => `- ${formatSkippedRepository(skippedRepository)}`));
+    lines.push("");
+  }
+
+  if (failure) {
+    lines.push("## Workflow Failure");
+    lines.push("");
+    lines.push(`- ${failure.message ?? String(failure)}`);
   }
 
   const changelog = `${lines.join("\n")}\n`;

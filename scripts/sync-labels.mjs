@@ -17,6 +17,7 @@ import {
 } from "./lib/config-validation.mjs";
 import { renderLabelSyncSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import {
+  filterEligibleRepositories,
   filterRepositories,
   isSourceRepository,
   repositoryAliases,
@@ -616,71 +617,97 @@ async function main() {
 
   const discoveredRepositories = await getOrganizationRepositories(token, orgName);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
-  const repositories = usingTargetRepositoryOverride
+  const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, orgName, properties.sourceRepository)
     : filterRepositories(discoveredRepositories, orgName, repositoryFilter, properties.sourceRepository);
+  const { repositories, skippedRepositories } = filterEligibleRepositories(
+    selectedRepositories,
+    { orgName, requireWriteAccess: true },
+  );
 
   if (usingTargetRepositoryOverride) {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${repositories.length} selected by workflow repository override.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${selectedRepositories.length} selected by workflow repository override.`,
     );
   } else {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${repositories.length} remain after repository-filter processing.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${orgName}; ${selectedRepositories.length} remain after repository-filter processing.`,
     );
   }
+
+  if (skippedRepositories.length > 0) {
+    console.log(`Skipping ${skippedRepositories.length} archived or read-only repositories.`);
+  }
+
+  const deleteMissing = deleteMissingOverride ?? false;
+  const deleteGithubDefaultLabels = deleteGithubDefaultLabelsOverride ?? false;
+  const results = [];
+  const writeRunChangelog = async (failure = null) => {
+    const changelogSummary = summarizeChangelogResults(results);
+
+    await writeChangelog({
+      workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
+      dryRun,
+      summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+        `Generated On: ${generatedDate}`,
+        `Workflow Run: ${workflowRun}`,
+        `Actor: ${metadata.actor || "Unavailable"}`,
+        `Test Mode: ${formatDisplayBoolean(dryRun)}`,
+        `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
+        `Default Label Delete Mode: ${formatDisplayBoolean(deleteGithubDefaultLabels)}`,
+        `Unlisted Label Delete Mode: ${formatDisplayBoolean(deleteMissing)}`,
+        `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
+        `Repositories Skipped: ${skippedRepositories.length}`,
+        `Created Labels: ${changelogSummary.createdLabels}`,
+        `Deleted Labels: ${changelogSummary.deletedLabels}`,
+        `Replaced Labels: ${changelogSummary.replacedLabels}`,
+        changelogSummary.replacedLabels > 0 && labelReplacements.length > 0
+          ? `Specified Replacements: ${formatSpecifiedReplacements(labelReplacements)}`
+          : null,
+      ],
+      skippedRepositories,
+      failure,
+      sections: results.map(renderLabelSyncSection),
+    });
+  };
 
   if (repositories.length === 0) {
     console.log(
       usingTargetRepositoryOverride
-        ? "No repositories were selected by the workflow repository override. Nothing to sync."
-        : "No repositories remain after repository-filter processing. Nothing to sync.",
+        ? "No writable repositories were selected by the workflow repository override. Nothing to sync."
+        : "No writable repositories remain after repository-filter processing. Nothing to sync.",
     );
+    await writeRunChangelog();
     return;
   }
 
   console.log(dryRun ? "Running in dry-run mode." : "Applying changes.");
-  const deleteMissing = deleteMissingOverride ?? false;
-  const deleteGithubDefaultLabels = deleteGithubDefaultLabelsOverride ?? false;
-  const results = [];
 
-  for (const repository of repositories) {
-    const result = await syncRepository(
-      token,
-      repository,
-      labels,
-      deletedLabels,
-      labelReplacements,
-      githubDefaultLabels,
-      deleteMissing,
-      deleteGithubDefaultLabels,
-    );
-    results.push(result);
+  let processingError = null;
+
+  try {
+    for (const repository of repositories) {
+      const result = await syncRepository(
+        token,
+        repository,
+        labels,
+        deletedLabels,
+        labelReplacements,
+        githubDefaultLabels,
+        deleteMissing,
+        deleteGithubDefaultLabels,
+      );
+      results.push(result);
+    }
+  } catch (error) {
+    processingError = error;
+  } finally {
+    await writeRunChangelog(processingError);
   }
 
-  const changelogSummary = summarizeChangelogResults(results);
-
-  await writeChangelog({
-    workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
-    dryRun,
-    summaryLines: ({ generatedDate, metadata, workflowRun }) => [
-      `Generated On: ${generatedDate}`,
-      `Workflow Run: ${workflowRun}`,
-      `Actor: ${metadata.actor || "Unavailable"}`,
-      `Test Mode: ${formatDisplayBoolean(dryRun)}`,
-      `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
-      `Default Label Delete Mode: ${formatDisplayBoolean(deleteGithubDefaultLabels)}`,
-      `Unlisted Label Delete Mode: ${formatDisplayBoolean(deleteMissing)}`,
-      `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
-      `Created Labels: ${changelogSummary.createdLabels}`,
-      `Deleted Labels: ${changelogSummary.deletedLabels}`,
-      `Replaced Labels: ${changelogSummary.replacedLabels}`,
-      changelogSummary.replacedLabels > 0 && labelReplacements.length > 0
-        ? `Specified Replacements: ${formatSpecifiedReplacements(labelReplacements)}`
-        : null,
-    ],
-    sections: results.map(renderLabelSyncSection),
-  });
+  if (processingError) {
+    throw processingError;
+  }
 }
 
 main().catch((error) => {
