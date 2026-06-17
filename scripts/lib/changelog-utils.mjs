@@ -50,6 +50,10 @@ function renderSummaryLine(line) {
   return `- **${label}**${value}`;
 }
 
+function renderColor(color) {
+  return `\`#${color}\``;
+}
+
 export function getWorkflowMetadata(workflowName) {
   return {
     workflowName,
@@ -137,7 +141,7 @@ export function renderLabelSyncSection(result) {
 
   const created = renderList(
     result.createdLabels,
-    (label) => `Created \`${label.name}\` (#${label.color})${label.description ? `: ${label.description}` : ""}`,
+    (label) => `Created \`${label.name}\` (${renderColor(label.color)})${label.description ? `: ${label.description}` : ""}`,
   );
   if (created) {
     lines.push("Created labels:");
@@ -153,7 +157,7 @@ export function renderLabelSyncSection(result) {
     }
 
     if (entry.before.color !== entry.after.color) {
-      changes.push(`color #${entry.before.color} -> #${entry.after.color}`);
+      changes.push(`color ${renderColor(entry.before.color)} -> ${renderColor(entry.after.color)}`);
     }
 
     if (entry.before.description !== entry.after.description) {

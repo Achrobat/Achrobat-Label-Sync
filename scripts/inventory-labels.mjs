@@ -78,14 +78,18 @@ function renderSummaryLine(line) {
 
 function renderLabel(label) {
   const description = label.description ? `: ${label.description}` : "";
-  return `\`${label.name}\` (#${label.color})${description}`;
+  return `\`${label.name}\` (${renderColor(label.color)})${description}`;
+}
+
+function renderColor(color) {
+  return `\`#${color}\``;
 }
 
 function renderLabelDetails(label) {
   const lines = [
     `### \`${label.name}\``,
     "",
-    `Color: \`#${label.color}\``,
+    `Color: ${renderColor(label.color)}`,
   ];
 
   if (label.description) {
@@ -187,17 +191,17 @@ export function renderInventorySummary({
   }
 
   if (includeSimilarities) {
-    lines.push("## Shared Exact Labels");
+    lines.push("## Shared Labels");
     lines.push("");
 
     if (sharedLabelGroups.length === 0) {
-      lines.push("- No exact labels were shared by two or more selected repositories.");
+      lines.push("- No labels were shared by two or more selected repositories.");
       lines.push("");
     } else {
       for (const group of sharedLabelGroups) {
         lines.push(...renderLabelDetails(group.label));
         lines.push("");
-        lines.push("Repositories with this exact label:");
+        lines.push("Repositories:");
 
         for (const repository of group.repositories) {
           lines.push(`- ${repository}`);
