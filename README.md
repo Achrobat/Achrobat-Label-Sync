@@ -50,6 +50,7 @@ The configured source repository is always skipped by repository filtering. You 
 - `Config-Reset` resets `repository-filter.jsonc` to empty whitelist mode, which targets no repositories until entries are added
 - GitHub default labels are pruned only when they exactly match `config/github-default-labels.jsonc`
 - Unmanaged label deletion is disabled unless `delete_missing` is enabled on `Org-Label-Sync`
+- Archived repositories are skipped automatically. Workflows that write repository data also skip repositories where the workflow token only has read access.
 
 ## How to use the workflows
 
@@ -99,7 +100,7 @@ Inputs:
 
 `label_replacements` is meant for label renames. The old label must exist in `config/deleted-labels.jsonc`, and the new label must exist in `config/labels.jsonc`.
 
-When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. Workflow summaries are retained according to GitHub Actions run retention settings.
+When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing. Workflow summaries are retained according to GitHub Actions run retention settings.
 
 ### Remove-Labels
 
@@ -115,7 +116,7 @@ Inputs:
 - `label_name`: exact label name to remove
 - `repositories`: comma-separated override for the target repository list
 
-Like `Org-Label-Sync`, changelog Markdown is written directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output.
+Like `Org-Label-Sync`, changelog Markdown is written directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing.
 
 ### Inventory-Labels
 
@@ -126,6 +127,8 @@ Inputs:
 - `exclude_configured_labels`: exclude labels whose name, color, and description exactly match a label in `config/labels.jsonc`
 - `list_similarities`: append a shared-label count and a section listing exact label specs shared by two or more selected repositories, with each matching repository listed under the label
 - `repositories`: comma-separated override for the target repository list
+
+Inventory skips archived repositories, but keeps non-archived read-only repositories because inventory does not write to them. If the run fails after inventorying some repositories, the workflow still writes the accumulated inventory summary before failing.
 
 ### Config-Reset
 

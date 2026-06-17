@@ -3,6 +3,7 @@ import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties, validateRepositoryFilter } from "./lib/config-validation.mjs";
 import { renderRemoveLabelsSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import {
+  filterEligibleRepositories,
   filterRepositories,
   isSourceRepository,
   repositoryAliases,
@@ -290,7 +291,7 @@ async function main() {
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
-  const repositories = usingTargetRepositoryOverride
+  const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, properties.organization, properties.sourceRepository)
     : filterRepositories(
       discoveredRepositories,
@@ -298,23 +299,61 @@ async function main() {
       repositoryFilter,
       properties.sourceRepository,
     );
+  const { repositories, skippedRepositories } = filterEligibleRepositories(
+    selectedRepositories,
+    { orgName: properties.organization, requireWriteAccess: true },
+  );
 
   if (usingTargetRepositoryOverride) {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} selected by workflow repository override.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${selectedRepositories.length} selected by workflow repository override.`,
     );
   } else {
     console.log(
-      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${repositories.length} remain after repository-filter processing.`,
+      `Discovered ${discoveredRepositories.length} repositories in ${properties.organization}; ${selectedRepositories.length} remain after repository-filter processing.`,
     );
   }
+
+  if (skippedRepositories.length > 0) {
+    console.log(`Skipping ${skippedRepositories.length} archived or read-only repositories.`);
+  }
+
+  const results = [];
+  const writeRunChangelog = async (failure = null) => {
+    const changelogSummary = summarizeChangelogResults(results);
+
+    await writeChangelog({
+      workflowName: dryRun ? "Remove-Labels Fake" : "Remove-Labels",
+      dryRun,
+      summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+        `Generated On: ${generatedDate}`,
+        `Workflow Run: ${workflowRun}`,
+        `Actor: ${metadata.actor || "Unavailable"}`,
+        `Test Mode: ${formatDisplayBoolean(dryRun)}`,
+        `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
+        `Label Removed: ${labelName}`,
+        `Run On Issues: ${formatDisplayBoolean(runOnIssues)}`,
+        `Target Only Closed Issues: ${formatDisplayBoolean(targetOnlyClosedIssues)}`,
+        `Run On Pull Requests: ${formatDisplayBoolean(runOnPullRequests)}`,
+        `Target Only Closed Pull Requests: ${formatDisplayBoolean(targetOnlyClosedPullRequests)}`,
+        `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
+        `Repositories Skipped: ${skippedRepositories.length}`,
+        `Removed From Issues: ${changelogSummary.removedFromIssues}`,
+        `Removed From Pull Requests: ${changelogSummary.removedFromPullRequests}`,
+      ],
+      skippedRepositories,
+      failure,
+      sections: results.map(renderRemoveLabelsSection),
+    });
+  };
 
   if (repositories.length === 0) {
     console.log(
       usingTargetRepositoryOverride
-        ? "No repositories were selected by the workflow repository override. Nothing to remove."
-        : "No repositories remain after repository-filter processing. Nothing to remove.",
+        ? "No writable repositories were selected by the workflow repository override. Nothing to remove."
+        : "No writable repositories remain after repository-filter processing. Nothing to remove.",
     );
+    await writeRunChangelog();
     return;
   }
 
@@ -325,41 +364,30 @@ async function main() {
 
   let totalRemovedIssues = 0;
   let totalRemovedPullRequests = 0;
-  const results = [];
+  let processingError = null;
 
-  for (const repository of repositories) {
-    const result = await processRepository(token, repository, labelName);
-    results.push(result);
-    totalRemovedIssues += result.removedIssues.length;
-    totalRemovedPullRequests += result.removedPullRequests.length;
+  try {
+    for (const repository of repositories) {
+      const result = await processRepository(token, repository, labelName);
+      results.push(result);
+      totalRemovedIssues += result.removedIssues.length;
+      totalRemovedPullRequests += result.removedPullRequests.length;
+    }
+  } catch (error) {
+    processingError = error;
+  } finally {
+    if (!processingError) {
+      console.log(
+        `Completed label removal. Total removed from issues=${totalRemovedIssues}, total removed from pull requests=${totalRemovedPullRequests}.`,
+      );
+    }
+
+    await writeRunChangelog(processingError);
   }
 
-  console.log(
-    `Completed label removal. Total removed from issues=${totalRemovedIssues}, total removed from pull requests=${totalRemovedPullRequests}.`,
-  );
-
-  const changelogSummary = summarizeChangelogResults(results);
-
-  await writeChangelog({
-    workflowName: dryRun ? "Remove-Labels Fake" : "Remove-Labels",
-    dryRun,
-    summaryLines: ({ generatedDate, metadata, workflowRun }) => [
-      `Generated On: ${generatedDate}`,
-      `Workflow Run: ${workflowRun}`,
-      `Actor: ${metadata.actor || "Unavailable"}`,
-      `Test Mode: ${formatDisplayBoolean(dryRun)}`,
-      `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
-      `Label Removed: ${labelName}`,
-      `Run On Issues: ${formatDisplayBoolean(runOnIssues)}`,
-      `Target Only Closed Issues: ${formatDisplayBoolean(targetOnlyClosedIssues)}`,
-      `Run On Pull Requests: ${formatDisplayBoolean(runOnPullRequests)}`,
-      `Target Only Closed Pull Requests: ${formatDisplayBoolean(targetOnlyClosedPullRequests)}`,
-      `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
-      `Removed From Issues: ${changelogSummary.removedFromIssues}`,
-      `Removed From Pull Requests: ${changelogSummary.removedFromPullRequests}`,
-    ],
-    sections: results.map(renderRemoveLabelsSection),
-  });
+  if (processingError) {
+    throw processingError;
+  }
 }
 
 main().catch((error) => {

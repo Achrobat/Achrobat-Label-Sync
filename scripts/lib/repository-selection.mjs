@@ -28,6 +28,68 @@ export function repositoryMatchesEntries(repository, entries, orgName) {
   return [...entries].some((entry) => aliases.has(entry));
 }
 
+export function repositoryDisplayName(repository, orgName) {
+  if (repository.full_name) {
+    return repository.full_name;
+  }
+
+  if (orgName && repository.name) {
+    return `${orgName}/${repository.name}`;
+  }
+
+  return repository.name ?? "unknown";
+}
+
+export function hasRepositoryWriteAccess(repository) {
+  const permissions = repository.permissions;
+
+  if (!permissions || typeof permissions !== "object") {
+    return true;
+  }
+
+  return Boolean(permissions.admin || permissions.maintain || permissions.push);
+}
+
+export function getRepositorySkipReason(repository, { requireWriteAccess = true } = {}) {
+  if (repository.archived) {
+    return "archived";
+  }
+
+  if (requireWriteAccess && !hasRepositoryWriteAccess(repository)) {
+    return "read-only";
+  }
+
+  return null;
+}
+
+export function filterEligibleRepositories(repositories, { orgName = "", requireWriteAccess = true } = {}) {
+  const eligibleRepositories = [];
+  const skippedRepositories = [];
+
+  for (const repository of repositories) {
+    const reason = getRepositorySkipReason(repository, { requireWriteAccess });
+
+    if (reason) {
+      skippedRepositories.push({
+        repository: repositoryDisplayName(repository, orgName),
+        reason,
+      });
+      continue;
+    }
+
+    eligibleRepositories.push(repository);
+  }
+
+  return {
+    repositories: eligibleRepositories,
+    skippedRepositories,
+  };
+}
+
+export function formatSkippedRepository(skippedRepository) {
+  return `\`${skippedRepository.repository}\` - ${skippedRepository.reason}`;
+}
+
 export function isSourceRepository(repository, sourceRepository, orgName) {
   if (!sourceRepository) {
     return false;
