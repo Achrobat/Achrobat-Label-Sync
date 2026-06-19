@@ -51,6 +51,10 @@ function renderSummaryLine(line) {
   return `- **${label}**${value}`;
 }
 
+function isWorkflowRunSummaryLine(line) {
+  return /^\s*workflow run\s*:/i.test(line);
+}
+
 function renderColor(color) {
   return `\`#${color}\``;
 }
@@ -89,11 +93,13 @@ export async function writeChangelog({
   const renderedSummaryLines = typeof summaryLines === "function"
     ? summaryLines({ generatedDate, metadata, workflowRun })
     : summaryLines;
+  const visibleSummaryLines = renderedSummaryLines
+    ?.filter((line) => line !== null && !isWorkflowRunSummaryLine(line));
 
-  const lines = renderedSummaryLines ? [
+  const lines = visibleSummaryLines ? [
     `# ${workflowName} Changelog`,
     "",
-    ...renderedSummaryLines.filter((line) => line !== null).map(renderSummaryLine),
+    ...visibleSummaryLines.map(renderSummaryLine),
     "",
     "## Changed Repositories",
     "",
@@ -101,7 +107,6 @@ export async function writeChangelog({
     `# ${workflowName} Changelog`,
     "",
     `- Generated: ${timestamp}`,
-    `- Workflow run: ${workflowRun}`,
     metadata.actor ? `- Actor: ${metadata.actor}` : null,
     ...introLines.map((line) => `- ${line}`),
     "",

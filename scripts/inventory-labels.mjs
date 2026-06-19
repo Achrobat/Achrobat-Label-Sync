@@ -147,7 +147,6 @@ export function buildSharedLabelGroups(results) {
 export function renderInventorySummary({
   workflowName,
   generatedDate,
-  workflowRun,
   actor,
   repoFilterMode,
   excludeConfiguredLabels: excludeConfigured,
@@ -160,7 +159,6 @@ export function renderInventorySummary({
   const labelsListed = results.reduce((count, result) => count + result.labels.length, 0);
   const summaryLines = [
     `Generated On: ${generatedDate}`,
-    `Workflow Run: ${workflowRun}`,
     `Actor: ${actor || "Unavailable"}`,
     `Repo Filter Mode: ${repoFilterMode}`,
     `Exclude Configured Labels: ${formatDisplayBoolean(excludeConfigured)}`,
@@ -244,14 +242,6 @@ function formatDatePath(date) {
   const partValues = Object.fromEntries(parts.map((part) => [part.type, part.value]));
 
   return `${partValues.year}-${partValues.month}-${partValues.day}`;
-}
-
-function formatWorkflowRunLink(metadata) {
-  if (!metadata.serverUrl || !metadata.repository || !metadata.runId) {
-    return "Unavailable";
-  }
-
-  return `[${metadata.workflowName} #${metadata.runNumber ?? metadata.runId}](${metadata.serverUrl}/${metadata.repository}/actions/runs/${metadata.runId})`;
 }
 
 async function githubRequest(token, method, apiPath) {
@@ -411,7 +401,6 @@ async function main() {
     const markdown = renderInventorySummary({
       workflowName: "Inventory-Labels",
       generatedDate: formatDatePath(new Date()),
-      workflowRun: formatWorkflowRunLink(metadata),
       actor: metadata.actor,
       repoFilterMode: formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode),
       excludeConfiguredLabels,

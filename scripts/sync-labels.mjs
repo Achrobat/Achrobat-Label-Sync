@@ -648,9 +648,8 @@ async function main() {
     await writeChangelog({
       workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
       dryRun,
-      summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+      summaryLines: ({ generatedDate, metadata }) => [
         `Generated On: ${generatedDate}`,
-        `Workflow Run: ${workflowRun}`,
         `Actor: ${metadata.actor || "Unavailable"}`,
         `Test Mode: ${formatDisplayBoolean(dryRun)}`,
         `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
