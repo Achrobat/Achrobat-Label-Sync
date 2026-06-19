@@ -1,0 +1,38 @@
+name: Request Repository Blacklist Inclusion
+description: Request that a repository be added to the blacklist.
+title: "Blacklist Request: "
+body:
+  - type: input
+    id: repository
+    attributes:
+      label: Repository name
+      description: Provide the repository name.
+      placeholder: "org/repository"
+    validations:
+      required: true
+
+  - type: input
+    id: relationship
+    attributes:
+      label: Your relationship to this repository
+      description: For example, maintainer, contributor, owner, or organization member.
+      placeholder: "Maintainer"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Reason for blacklist inclusion
+      description: Optional. Provide any context that would help explain this request.
+      placeholder: "This repository should not be included because..."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: maintainer-confirmation
+    attributes:
+      label: Maintainer confirmation
+      options:
+        - label: I am the maintainer of this repository.
+          required: false
