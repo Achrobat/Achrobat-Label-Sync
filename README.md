@@ -98,7 +98,7 @@ Inputs:
 - `repositories`: comma-separated override for the target repository list
 - `label_replacements`: comma-separated rename map in `old=new, old2=new2` format
 
-`label_replacements` is meant for label renames. The old label must exist in `config/deleted-labels.jsonc`, and the new label must exist in `config/labels.jsonc`.
+`label_replacements` is meant for label renames. The new label must exist in `config/labels.jsonc`. The old label must exist in `config/deleted-labels.jsonc`, or it may exist in `config/github-default-labels.jsonc` when `delete_github_default_labels` is enabled.
 
 When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing. Workflow summaries are retained according to GitHub Actions run retention settings.
 
