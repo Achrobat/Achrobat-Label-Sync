@@ -18,6 +18,11 @@
     "description": "Description Adding and whatnot"
   },
   {
+    "name": "Enhancement",
+    "color": "f6270b",
+    "description": "Adds an enhancement"
+  },
+  {
     "name": "Newsworthy",
     "color": "9d3b74",
     "description": ""
