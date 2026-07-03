@@ -76,6 +76,7 @@ jobs:
 
       - name: Validate updated config
         env:
+          DELETE_GITHUB_DEFAULT_LABELS: ${{ inputs.delete_github_default_labels }}
           LABEL_REPLACEMENTS: ${{ inputs.label_replacements }}
         run: node scripts/sync-labels.mjs --validate-only
 

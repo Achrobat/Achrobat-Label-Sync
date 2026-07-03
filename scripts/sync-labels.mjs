@@ -257,14 +257,20 @@ function isExactGithubDefaultLabel(label, githubDefaultLabels) {
   return githubDefaultLabels.some((githubDefaultLabel) => labelsExactlyMatch(label, githubDefaultLabel));
 }
 
-function assertValidLabelReplacements(replacements, desiredLabels, deletedLabels) {
+function assertValidLabelReplacements(replacements, desiredLabels, deletedLabels, githubDefaultLabels, deleteGithubDefaultLabels) {
   const desiredKeys = new Set(desiredLabels.map((label) => normalizeName(label.name)));
   const deletedKeys = new Set(deletedLabels.map((label) => normalizeName(label.name)));
+  const githubDefaultKeys = new Set(githubDefaultLabels.map((label) => normalizeName(label.name)));
 
   for (const replacement of replacements) {
+    const hasValidSource = deletedKeys.has(replacement.oldKey)
+      || (deleteGithubDefaultLabels && githubDefaultKeys.has(replacement.oldKey));
+
     assert(
-      deletedKeys.has(replacement.oldKey),
-      `Label replacement source "${replacement.oldName}" must exist in config/deleted-labels.jsonc.`,
+      hasValidSource,
+      deleteGithubDefaultLabels
+        ? `Label replacement source "${replacement.oldName}" must exist in config/deleted-labels.jsonc or config/github-default-labels.jsonc.`
+        : `Label replacement source "${replacement.oldName}" must exist in config/deleted-labels.jsonc.`,
     );
     assert(
       desiredKeys.has(replacement.newKey),
@@ -619,9 +625,10 @@ async function main() {
   });
   const labels = validateLabels(await readJsonc(labelsPath));
   const deletedLabels = validateDeletedLabels(await readJsonc(deletedLabelsPath));
-  assertNoManagedDeletedLabelOverlap(labels, deletedLabels);
-  assertValidLabelReplacements(labelReplacements, labels, deletedLabels);
   const githubDefaultLabels = validateGithubDefaultLabels(await readJsonc(githubDefaultLabelsPath));
+  const deleteGithubDefaultLabels = deleteGithubDefaultLabelsOverride ?? false;
+  assertNoManagedDeletedLabelOverlap(labels, deletedLabels);
+  assertValidLabelReplacements(labelReplacements, labels, deletedLabels, githubDefaultLabels, deleteGithubDefaultLabels);
   const repositoryFilter = validateRepositoryFilter(await readJsonc(repositoryFilterPath));
   const activeFilterCount = repositoryFilter.useWhitelist ? repositoryFilter.whitelist.size : repositoryFilter.blacklist.size;
   const activeFilterMode = repositoryFilter.useWhitelist ? "whitelist" : "blacklist";
@@ -666,7 +673,6 @@ async function main() {
   }
 
   const deleteMissing = deleteMissingOverride ?? false;
-  const deleteGithubDefaultLabels = deleteGithubDefaultLabelsOverride ?? false;
   const results = [];
   const writeRunChangelog = async (failure = null) => {
     const changelogSummary = summarizeChangelogResults(results);
