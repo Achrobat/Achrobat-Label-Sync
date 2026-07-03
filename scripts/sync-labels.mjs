@@ -379,6 +379,12 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
         matchedPullRequests: affected.affectedPullRequests,
         addedIssues: null,
         addedPullRequests: null,
+        before: {
+          name: existingOld.name,
+          color: normalizeColor(existingOld.color),
+          description: normalizeDescription(existingOld.description),
+        },
+        after: desiredNew,
       });
       result.hasChanges = true;
       console.log(`  ~ ${existingOld.name} -> ${desiredNew.name} (replacement rename)`);
