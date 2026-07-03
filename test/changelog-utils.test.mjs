@@ -226,21 +226,47 @@ test("renderLabelSyncSection appends affected issue and pull request counts to d
     createdLabels: [],
     updatedLabels: [],
     deletedConfiguredLabels: [
-      { name: "bug", affectedIssues: 1, affectedPullRequests: 2 },
-      { name: "cleanup", affectedIssues: 0, affectedPullRequests: 3 },
-      { name: "docs", affectedIssues: 1, affectedPullRequests: 0 },
-      { name: "unused", affectedIssues: 0, affectedPullRequests: 0 },
+      {
+        name: "bug",
+        color: "d73a4a",
+        description: "Something is not working",
+        affectedIssues: 1,
+        affectedPullRequests: 2,
+      },
+      {
+        name: "cleanup",
+        color: "0e8a16",
+        description: "",
+        affectedIssues: 0,
+        affectedPullRequests: 3,
+      },
     ],
-    deletedGithubDefaultLabels: [],
-    deletedMissingLabels: [],
+    deletedGithubDefaultLabels: [
+      {
+        name: "docs",
+        color: "0075ca",
+        description: "Improvements or additions to documentation",
+        affectedIssues: 1,
+        affectedPullRequests: 0,
+      },
+    ],
+    deletedMissingLabels: [
+      {
+        name: "unused",
+        color: "cfd3d7",
+        description: "No longer managed",
+        affectedIssues: 0,
+        affectedPullRequests: 0,
+      },
+    ],
   });
 
   assert.deepEqual(section.lines, [
-    "Deleted labels from deleted-labels config:",
-    "- Deleted `bug` (2 PRs, 1 Issue affected)",
-    "- Deleted `cleanup` (3 PRs affected)",
-    "- Deleted `docs` (1 Issue affected)",
-    "- Deleted `unused`",
+    "Deleted Labels:",
+    "- Deleted `bug` (`#d73a4a`): Something is not working (2 PRs, 1 Issue affected)",
+    "- Deleted `cleanup` (`#0e8a16`) (3 PRs affected)",
+    "- Deleted GitHub default label `docs` (`#0075ca`): Improvements or additions to documentation (1 Issue affected)",
+    "- Deleted unmanaged label `unused` (`#cfd3d7`): No longer managed",
   ]);
 });
 
@@ -280,9 +306,9 @@ test("renderLabelSyncSection appends affected issue and pull request counts to r
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Replaced `bug`: name `bug` -> `type: bug` (2 PRs, 1 Issue affected)",
-    "- Replaced `feature`: name `feature` -> `type: feature` (3 PRs affected)",
-    "- Replaced `stale`: name `stale` -> `status: stale`",
+    "- Replaced `bug`: `bug` -> `type: bug` (2 PRs, 1 Issue affected)",
+    "- Replaced `feature`: `feature` -> `type: feature` (3 PRs affected)",
+    "- Replaced `stale`: `stale` -> `status: stale`",
   ]);
 });
 
@@ -331,8 +357,8 @@ test("renderLabelSyncSection combines label replacements and automatic updates w
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Replaced `bug`: name `bug` -> `Bug Fix`, color `#d73a4a` -> `#0e8a16`, description `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
-    "- Replaced `enhancement`: name `enhancement` -> `Enhancement`, color `#a2eeef` -> `#84b6eb`, description `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
+    "- Replaced `bug`: `bug` -> `Bug Fix` | `#d73a4a` -> `#0e8a16` | `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
+    "- Replaced `enhancement`: `enhancement` -> `Enhancement` | `#a2eeef` -> `#84b6eb` | `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
   ]);
 });
 
