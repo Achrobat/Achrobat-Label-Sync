@@ -99,6 +99,13 @@ function renderLabelFieldChangeSuffix(before, after) {
   return `: ${changes.join(", ")}`;
 }
 
+function renderLabelReplacementLine(oldName, before, after, affectedSuffix = "") {
+  const fallbackDetails = `: name \`${oldName}\` -> \`${after.name}\``;
+  const details = before && after ? renderLabelFieldChangeSuffix(before, after) || fallbackDetails : fallbackDetails;
+
+  return `Replaced \`${oldName}\`${details}${affectedSuffix}`;
+}
+
 function formatCount(count, singular, plural) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -223,20 +230,12 @@ export function renderLabelSyncSection(result) {
 
   const replacementEntries = [
     ...result.labelReplacements.map((entry) => {
-      const details = entry.before && entry.after ? renderLabelFieldChangeSuffix(entry.before, entry.after) : "";
       const affectedSuffix = formatAffectedSuffix(entry);
+      const after = entry.after ?? { name: entry.newName };
 
-      if (entry.mode === "renamed") {
-        return `Renamed \`${entry.oldName}\` to \`${entry.newName}\`${details}${affectedSuffix}`;
-      }
-
-      return `Replaced \`${entry.oldName}\` with \`${entry.newName}\`${details}${affectedSuffix}`;
+      return renderLabelReplacementLine(entry.oldName, entry.before, after, affectedSuffix);
     }),
-    ...result.updatedLabels.map((entry) => {
-      const details = renderLabelFieldChangeSuffix(entry.before, entry.after);
-
-      return `Updated \`${entry.before.name}\`${details}`;
-    }),
+    ...result.updatedLabels.map((entry) => renderLabelReplacementLine(entry.before.name, entry.before, entry.after)),
   ];
   const replacements = renderList(replacementEntries, (entry) => entry);
   pushRenderedList(lines, "Label replacements:", replacements);
