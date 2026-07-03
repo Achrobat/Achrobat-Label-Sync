@@ -280,9 +280,9 @@ test("renderLabelSyncSection appends affected issue and pull request counts to r
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Renamed `bug` to `type: bug` (2 PRs, 1 Issue affected)",
-    "- Replaced `feature` with `type: feature` (3 PRs affected)",
-    "- Replaced `stale` with `status: stale`",
+    "- Replaced `bug`: name `bug` -> `type: bug` (2 PRs, 1 Issue affected)",
+    "- Replaced `feature`: name `feature` -> `type: feature` (3 PRs affected)",
+    "- Replaced `stale`: name `stale` -> `status: stale`",
   ]);
 });
 
@@ -331,8 +331,8 @@ test("renderLabelSyncSection combines label replacements and automatic updates w
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Renamed `bug` to `Bug Fix`: name `bug` -> `Bug Fix`, color `#d73a4a` -> `#0e8a16`, description `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
-    "- Updated `enhancement`: name `enhancement` -> `Enhancement`, color `#a2eeef` -> `#84b6eb`, description `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
+    "- Replaced `bug`: name `bug` -> `Bug Fix`, color `#d73a4a` -> `#0e8a16`, description `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
+    "- Replaced `enhancement`: name `enhancement` -> `Enhancement`, color `#a2eeef` -> `#84b6eb`, description `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
   ]);
 });
 
