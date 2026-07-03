@@ -20,6 +20,7 @@ import {
   filterRepositoriesForWriteMode,
   filterRepositories,
   isSourceRepository,
+  parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
@@ -630,6 +631,7 @@ async function main() {
 
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
   const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
   assert(orgName, "ORG_NAME, GITHUB_REPOSITORY_OWNER, or properties.organization is required to discover organization repositories.");
 
@@ -640,7 +642,7 @@ async function main() {
     : filterRepositories(discoveredRepositories, orgName, repositoryFilter, properties.sourceRepository);
   const { repositories, skippedRepositories } = filterRepositoriesForWriteMode(
     selectedRepositories,
-    { orgName, dryRun },
+    { orgName, dryRun, tokenPermissions },
   );
 
   if (usingTargetRepositoryOverride) {

@@ -6,6 +6,7 @@ import {
   filterRepositoriesForWriteMode,
   filterRepositories,
   isSourceRepository,
+  parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
@@ -289,6 +290,7 @@ async function main() {
 
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
@@ -302,7 +304,7 @@ async function main() {
     );
   const { repositories, skippedRepositories } = filterRepositoriesForWriteMode(
     selectedRepositories,
-    { orgName: properties.organization, dryRun },
+    { orgName: properties.organization, dryRun, tokenPermissions },
   );
 
   if (usingTargetRepositoryOverride) {

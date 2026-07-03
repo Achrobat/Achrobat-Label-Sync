@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { assert } from "./lib/config-utils.mjs";
 
-async function outputToken(token) {
+async function outputToken(token, tokenPermissions = null) {
   console.log("::add-mask::" + token);
 
   if (!process.env.GITHUB_ENV) {
@@ -16,6 +16,7 @@ async function outputToken(token) {
       `LABEL_SYNC_TOKEN=${token}`,
       `CONFIG_LABEL_SYNC_TOKEN=${token}`,
       `PUSH_TOKEN=${token}`,
+      `LABEL_SYNC_TOKEN_PERMISSIONS=${tokenPermissions ? JSON.stringify(tokenPermissions) : ""}`,
       "",
     ].join("\n"),
     "utf8",
@@ -67,7 +68,10 @@ async function createInstallationToken({ appId, privateKey, installationId }) {
 
   const body = await response.json();
   assert(body.token, "GitHub App installation token response did not include a token.");
-  return body.token;
+  return {
+    token: body.token,
+    permissions: body.permissions ?? null,
+  };
 }
 
 async function main() {
@@ -90,8 +94,8 @@ async function main() {
   assert(privateKey, "GITHUB_APP_PRIVATE_KEY is required when properties.authentication.mode is \"githubApp\".");
   assert(installationId, "GITHUB_APP_INSTALLATION_ID is required when properties.authentication.mode is \"githubApp\".");
 
-  const token = await createInstallationToken({ appId, privateKey, installationId });
-  await outputToken(token);
+  const { token, permissions } = await createInstallationToken({ appId, privateKey, installationId });
+  await outputToken(token, permissions);
 }
 
 main().catch((error) => {

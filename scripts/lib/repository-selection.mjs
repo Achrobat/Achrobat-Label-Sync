@@ -40,7 +40,41 @@ export function repositoryDisplayName(repository, orgName) {
   return repository.name ?? "unknown";
 }
 
-export function hasRepositoryWriteAccess(repository) {
+export function parseTokenPermissions(value) {
+  if (!value) {
+    return null;
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("LABEL_SYNC_TOKEN_PERMISSIONS must be a JSON object when provided.");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("LABEL_SYNC_TOKEN_PERMISSIONS must be a JSON object when provided.");
+  }
+
+  return parsed;
+}
+
+export function hasTokenLabelWriteAccess(tokenPermissions) {
+  if (!tokenPermissions || typeof tokenPermissions !== "object") {
+    return null;
+  }
+
+  return tokenPermissions.issues === "write" || tokenPermissions.pull_requests === "write";
+}
+
+export function hasRepositoryWriteAccess(repository, { tokenPermissions = null } = {}) {
+  const hasTokenWriteAccess = hasTokenLabelWriteAccess(tokenPermissions);
+
+  if (hasTokenWriteAccess !== null) {
+    return hasTokenWriteAccess;
+  }
+
   const permissions = repository.permissions;
 
   if (!permissions || typeof permissions !== "object") {
@@ -50,24 +84,27 @@ export function hasRepositoryWriteAccess(repository) {
   return Boolean(permissions.admin || permissions.maintain || permissions.push);
 }
 
-export function getRepositorySkipReason(repository, { requireWriteAccess = true } = {}) {
+export function getRepositorySkipReason(repository, { requireWriteAccess = true, tokenPermissions = null } = {}) {
   if (repository.archived) {
     return "archived";
   }
 
-  if (requireWriteAccess && !hasRepositoryWriteAccess(repository)) {
+  if (requireWriteAccess && !hasRepositoryWriteAccess(repository, { tokenPermissions })) {
     return "read-only";
   }
 
   return null;
 }
 
-export function filterEligibleRepositories(repositories, { orgName = "", requireWriteAccess = true } = {}) {
+export function filterEligibleRepositories(
+  repositories,
+  { orgName = "", requireWriteAccess = true, tokenPermissions = null } = {},
+) {
   const eligibleRepositories = [];
   const skippedRepositories = [];
 
   for (const repository of repositories) {
-    const reason = getRepositorySkipReason(repository, { requireWriteAccess });
+    const reason = getRepositorySkipReason(repository, { requireWriteAccess, tokenPermissions });
 
     if (reason) {
       skippedRepositories.push({
@@ -86,10 +123,13 @@ export function filterEligibleRepositories(repositories, { orgName = "", require
   };
 }
 
-export function filterRepositoriesForWriteMode(repositories, { orgName = "", dryRun = false } = {}) {
+export function filterRepositoriesForWriteMode(
+  repositories,
+  { orgName = "", dryRun = false, tokenPermissions = null } = {},
+) {
   return filterEligibleRepositories(
     repositories,
-    { orgName, requireWriteAccess: !dryRun },
+    { orgName, requireWriteAccess: !dryRun, tokenPermissions },
   );
 }
 

@@ -5,6 +5,7 @@ import {
   filterEligibleRepositories,
   filterRepositoriesForWriteMode,
   formatSkippedRepository,
+  parseTokenPermissions,
 } from "../scripts/lib/repository-selection.mjs";
 
 test("filterEligibleRepositories skips archived repositories and read-only repositories when writes are required", () => {
@@ -123,6 +124,32 @@ test("filterRepositoriesForWriteMode skips read-only repositories when applying 
   assert.deepEqual(skippedRepositories, [
     { repository: "example/read-only", reason: "read-only" },
   ]);
+});
+
+test("filterRepositoriesForWriteMode keeps repositories when token has label write permissions", () => {
+  const repositories = [
+    {
+      full_name: "example/app-token-label-write",
+      name: "app-token-label-write",
+      archived: false,
+      permissions: { pull: true, push: false, maintain: false, admin: false },
+    },
+  ];
+
+  const { repositories: eligible, skippedRepositories } = filterRepositoriesForWriteMode(
+    repositories,
+    { dryRun: false, tokenPermissions: { issues: "write" } },
+  );
+
+  assert.deepEqual(eligible.map((repository) => repository.full_name), ["example/app-token-label-write"]);
+  assert.deepEqual(skippedRepositories, []);
+});
+
+test("parseTokenPermissions returns token permissions from a JSON object string", () => {
+  assert.deepEqual(
+    parseTokenPermissions('{"issues":"write","contents":"read"}'),
+    { issues: "write", contents: "read" },
+  );
 });
 
 test("formatSkippedRepository renders a stable skipped repository list item", () => {
