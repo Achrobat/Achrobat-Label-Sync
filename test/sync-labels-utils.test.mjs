@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createLabelReplacementEntry } from "../scripts/sync-labels.mjs";
+import {
+  createLabelReplacementEntry,
+  renderLabelSyncSummaryLines,
+  summarizeChangelogResults,
+} from "../scripts/sync-labels.mjs";
 
 test("createLabelReplacementEntry records field snapshots for migrated replacements", () => {
   const entry = createLabelReplacementEntry({
@@ -43,4 +47,64 @@ test("createLabelReplacementEntry records field snapshots for migrated replaceme
       description: "Fixes a bug. Please link it in the PR if an issue exists for it.",
     },
   });
+});
+
+test("summarizeChangelogResults totals affected issues and pull requests", () => {
+  const summary = summarizeChangelogResults([
+    {
+      hasChanges: true,
+      createdLabels: [{ name: "new" }],
+      labelReplacements: [
+        { matchedIssues: 2, matchedPullRequests: 3 },
+        { affectedIssues: 1, affectedPullRequests: 4 },
+      ],
+      deletedConfiguredLabels: [
+        { affectedIssues: 5, affectedPullRequests: 6 },
+      ],
+      deletedGithubDefaultLabels: [
+        { affectedIssues: 7, affectedPullRequests: 8 },
+      ],
+      deletedMissingLabels: [
+        { affectedIssues: 9, affectedPullRequests: 10 },
+      ],
+    },
+    {
+      hasChanges: false,
+      createdLabels: [],
+      labelReplacements: [],
+      deletedConfiguredLabels: [],
+      deletedGithubDefaultLabels: [],
+      deletedMissingLabels: [],
+    },
+  ]);
+
+  assert.equal(summary.affectedIssues, 24);
+  assert.equal(summary.affectedPullRequests, 31);
+});
+
+test("renderLabelSyncSummaryLines appends affected totals at the bottom", () => {
+  const lines = renderLabelSyncSummaryLines({
+    generatedDate: "2026-07-03",
+    metadata: { actor: "octocat" },
+    dryRun: true,
+    usingTargetRepositoryOverride: false,
+    activeFilterMode: "blacklist",
+    deleteGithubDefaultLabels: true,
+    deleteMissing: false,
+    skippedRepositories: [],
+    changelogSummary: {
+      repositoriesAffected: 2,
+      createdLabels: 3,
+      deletedLabels: 4,
+      replacedLabels: 1,
+      affectedIssues: 24,
+      affectedPullRequests: 31,
+    },
+    labelReplacements: [{ oldName: "bug", newName: "Bug Fix" }],
+  });
+
+  assert.deepEqual(lines.slice(-2), [
+    "Total Issues Affected: 24",
+    "Total PRs Affected: 31",
+  ]);
 });
