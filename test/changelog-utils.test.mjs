@@ -286,6 +286,56 @@ test("renderLabelSyncSection appends affected issue and pull request counts to r
   ]);
 });
 
+test("renderLabelSyncSection combines label replacements and automatic updates with field details", () => {
+  const section = renderLabelSyncSection({
+    repository: "example/repo",
+    hasChanges: true,
+    labelReplacements: [
+      {
+        oldName: "bug",
+        newName: "Bug Fix",
+        mode: "renamed",
+        matchedIssues: 1,
+        matchedPullRequests: 2,
+        before: {
+          name: "bug",
+          color: "d73a4a",
+          description: "Something is not working",
+        },
+        after: {
+          name: "Bug Fix",
+          color: "0e8a16",
+          description: "Fixes a confirmed defect",
+        },
+      },
+    ],
+    createdLabels: [],
+    updatedLabels: [
+      {
+        before: {
+          name: "enhancement",
+          color: "a2eeef",
+          description: "New feature or request",
+        },
+        after: {
+          name: "Enhancement",
+          color: "84b6eb",
+          description: "Improve an existing mechanic. Please explain the change with a before/after comparison.",
+        },
+      },
+    ],
+    deletedConfiguredLabels: [],
+    deletedGithubDefaultLabels: [],
+    deletedMissingLabels: [],
+  });
+
+  assert.deepEqual(section.lines, [
+    "Label replacements:",
+    "- Renamed `bug` to `Bug Fix`: name `bug` -> `Bug Fix`, color `#d73a4a` -> `#0e8a16`, description `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
+    "- Updated `enhancement`: name `enhancement` -> `Enhancement`, color `#a2eeef` -> `#84b6eb`, description `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
+  ]);
+});
+
 test("renderRemoveLabelsSection includes a per-repository affected count summary", () => {
   const section = renderRemoveLabelsSection({
     repository: "example/repo",
