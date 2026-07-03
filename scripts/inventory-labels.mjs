@@ -16,6 +16,7 @@ import {
 import {
   filterEligibleRepositories,
   filterRepositories,
+  formatRepositoryLink,
   formatSkippedRepository,
   isSourceRepository,
   repositoryAliases,
@@ -183,7 +184,7 @@ export function renderInventorySummary({
       continue;
     }
 
-    lines.push(`### ${result.repository}`);
+    lines.push(`### ${formatRepositoryLink(result.repository)}`);
     lines.push("");
 
     for (const label of result.labels) {
@@ -207,7 +208,7 @@ export function renderInventorySummary({
         lines.push("Repositories:");
 
         for (const repository of group.repositories) {
-          lines.push(`- ${repository}`);
+          lines.push(`- ${formatRepositoryLink(repository)}`);
         }
 
         lines.push("");

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   assert,
   labelsExactlyMatch,
@@ -107,12 +108,59 @@ function formatSpecifiedReplacements(replacements) {
   return replacements.map((replacement) => `${replacement.oldName} -> ${replacement.newName}`).join(", ");
 }
 
-function summarizeChangelogResults(results) {
+export function renderLabelSyncSummaryLines({
+  generatedDate,
+  metadata,
+  dryRun,
+  usingTargetRepositoryOverride,
+  activeFilterMode,
+  deleteGithubDefaultLabels,
+  deleteMissing,
+  skippedRepositories,
+  changelogSummary,
+  labelReplacements,
+}) {
+  return [
+    `Generated On: ${generatedDate}`,
+    `Actor: ${metadata.actor || "Unavailable"}`,
+    `Test Mode: ${formatDisplayBoolean(dryRun)}`,
+    `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
+    `Default Label Delete Mode: ${formatDisplayBoolean(deleteGithubDefaultLabels)}`,
+    `Unlisted Label Delete Mode: ${formatDisplayBoolean(deleteMissing)}`,
+    `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
+    `Repositories Skipped: ${skippedRepositories.length}`,
+    `Created Labels: ${changelogSummary.createdLabels}`,
+    `Deleted Labels: ${changelogSummary.deletedLabels}`,
+    `Replaced Labels: ${changelogSummary.replacedLabels}`,
+    changelogSummary.replacedLabels > 0 && labelReplacements.length > 0
+      ? `Specified Replacements: ${formatSpecifiedReplacements(labelReplacements)}`
+      : null,
+    `Total Issues Affected: ${changelogSummary.affectedIssues}`,
+    `Total PRs Affected: ${changelogSummary.affectedPullRequests}`,
+  ];
+}
+
+function getAffectedIssues(entry) {
+  return entry.affectedIssues ?? entry.matchedIssues ?? 0;
+}
+
+function getAffectedPullRequests(entry) {
+  return entry.affectedPullRequests ?? entry.matchedPullRequests ?? 0;
+}
+
+export function summarizeChangelogResults(results) {
   return results.reduce(
     (summary, result) => {
       if (result.hasChanges) {
         summary.repositoriesAffected += 1;
       }
+
+      const affectedEntries = [
+        ...result.labelReplacements,
+        ...result.deletedConfiguredLabels,
+        ...result.deletedGithubDefaultLabels,
+        ...result.deletedMissingLabels,
+      ];
 
       summary.createdLabels += result.createdLabels.length;
       summary.deletedLabels += (
@@ -121,6 +169,8 @@ function summarizeChangelogResults(results) {
         + result.deletedMissingLabels.length
       );
       summary.replacedLabels += result.labelReplacements.length;
+      summary.affectedIssues += affectedEntries.reduce((count, entry) => count + getAffectedIssues(entry), 0);
+      summary.affectedPullRequests += affectedEntries.reduce((count, entry) => count + getAffectedPullRequests(entry), 0);
 
       return summary;
     },
@@ -129,6 +179,8 @@ function summarizeChangelogResults(results) {
       createdLabels: 0,
       deletedLabels: 0,
       replacedLabels: 0,
+      affectedIssues: 0,
+      affectedPullRequests: 0,
     },
   );
 }
@@ -360,6 +412,21 @@ async function migrateLabelAssignments(token, repositoryFullName, oldLabelName, 
   };
 }
 
+export function createLabelReplacementEntry({ existingOld, desiredNew, mode, counts }) {
+  return {
+    oldName: existingOld.name,
+    newName: desiredNew.name,
+    mode,
+    ...counts,
+    before: {
+      name: existingOld.name,
+      color: normalizeColor(existingOld.color),
+      description: normalizeDescription(existingOld.description),
+    },
+    after: desiredNew,
+  };
+}
+
 async function applyLabelReplacements(token, repository, replacements, desiredByName, existingByName, workingLabels, result) {
   let replaced = 0;
 
@@ -377,21 +444,19 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
       const affected = await getLabelAffectedCounts(token, repository.full_name, existingOld.name);
 
       replaced += 1;
-      result.labelReplacements.push({
-        oldName: existingOld.name,
-        newName: desiredNew.name,
-        mode: "renamed",
-        matchedIssues: affected.affectedIssues,
-        matchedPullRequests: affected.affectedPullRequests,
-        addedIssues: null,
-        addedPullRequests: null,
-        before: {
-          name: existingOld.name,
-          color: normalizeColor(existingOld.color),
-          description: normalizeDescription(existingOld.description),
-        },
-        after: desiredNew,
-      });
+      result.labelReplacements.push(
+        createLabelReplacementEntry({
+          existingOld,
+          desiredNew,
+          mode: "renamed",
+          counts: {
+            matchedIssues: affected.affectedIssues,
+            matchedPullRequests: affected.affectedPullRequests,
+            addedIssues: null,
+            addedPullRequests: null,
+          },
+        }),
+      );
       result.hasChanges = true;
       console.log(`  ~ ${existingOld.name} -> ${desiredNew.name} (replacement rename)`);
 
@@ -412,12 +477,14 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
     const migration = await migrateLabelAssignments(token, repository.full_name, existingOld.name, desiredNew.name);
 
     replaced += 1;
-    result.labelReplacements.push({
-      oldName: existingOld.name,
-      newName: desiredNew.name,
-      mode: "migrated",
-      ...migration,
-    });
+    result.labelReplacements.push(
+      createLabelReplacementEntry({
+        existingOld,
+        desiredNew,
+        mode: "migrated",
+        counts: migration,
+      }),
+    );
     result.hasChanges = true;
     console.log(
       `  ~ ${existingOld.name} -> ${desiredNew.name} (replacement migration: issues=${migration.matchedIssues}, pullRequests=${migration.matchedPullRequests})`,
@@ -680,22 +747,18 @@ async function main() {
     await writeChangelog({
       workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
       dryRun,
-      summaryLines: ({ generatedDate, metadata }) => [
-        `Generated On: ${generatedDate}`,
-        `Actor: ${metadata.actor || "Unavailable"}`,
-        `Test Mode: ${formatDisplayBoolean(dryRun)}`,
-        `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
-        `Default Label Delete Mode: ${formatDisplayBoolean(deleteGithubDefaultLabels)}`,
-        `Unlisted Label Delete Mode: ${formatDisplayBoolean(deleteMissing)}`,
-        `Repositories Affected: ${changelogSummary.repositoriesAffected}`,
-        `Repositories Skipped: ${skippedRepositories.length}`,
-        `Created Labels: ${changelogSummary.createdLabels}`,
-        `Deleted Labels: ${changelogSummary.deletedLabels}`,
-        `Replaced Labels: ${changelogSummary.replacedLabels}`,
-        changelogSummary.replacedLabels > 0 && labelReplacements.length > 0
-          ? `Specified Replacements: ${formatSpecifiedReplacements(labelReplacements)}`
-          : null,
-      ],
+      summaryLines: ({ generatedDate, metadata }) => renderLabelSyncSummaryLines({
+        generatedDate,
+        metadata,
+        dryRun,
+        usingTargetRepositoryOverride,
+        activeFilterMode,
+        deleteGithubDefaultLabels,
+        deleteMissing,
+        skippedRepositories,
+        changelogSummary,
+        labelReplacements,
+      }),
       skippedRepositories,
       failure,
       sections: results.map(renderLabelSyncSection),
@@ -741,7 +804,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

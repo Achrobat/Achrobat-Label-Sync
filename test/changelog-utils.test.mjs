@@ -57,7 +57,7 @@ test("writeChangelog appends unchanged Markdown formatting to the GitHub step su
     assert.doesNotMatch(summary, /Workflow Run:/);
     assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
     assert.match(summary, /- \*\*Test Mode:\*\* True\n/);
-    assert.match(summary, /\n## Changed Repositories\n\n### example\/repo\n\n/);
+    assert.match(summary, /\n## Changed Repositories\n\n### \[example\/repo\]\(https:\/\/github.com\/example\/repo\)\n\n/);
     assert.match(summary, /Created labels:\n- Created `status: ready` \(#0e8a16\): Ready to merge\n\n$/);
     await assert.rejects(fs.stat(path.join(workspace, "changelogs")), { code: "ENOENT" });
   } finally {
@@ -171,8 +171,8 @@ test("writeChangelog includes skipped repositories and failure details when prov
     });
 
     const summary = await fs.readFile(summaryPath, "utf8");
-    assert.match(summary, /## Changed Repositories\n\n### example\/changed\n\n/);
-    assert.match(summary, /## Skipped Repositories\n\n- `example\/archive` - archived\n- `example\/read-only` - read-only\n\n/);
+    assert.match(summary, /## Changed Repositories\n\n### \[example\/changed\]\(https:\/\/github.com\/example\/changed\)\n\n/);
+    assert.match(summary, /## Skipped Repositories\n\n- \[example\/archive\]\(https:\/\/github.com\/example\/archive\) - archived\n- \[example\/read-only\]\(https:\/\/github.com\/example\/read-only\) - read-only\n\n/);
     assert.match(summary, /## Workflow Failure\n\n- PATCH \/repos\/example\/broken\/labels\/bug failed with 500\n$/);
   } finally {
     process.chdir(originalCwd);
@@ -216,6 +216,40 @@ test("renderInventorySummary omits workflow run details", () => {
   assert.match(summary, /- \*\*Generated On:\*\* 2026-06-17\n/);
   assert.doesNotMatch(summary, /Workflow Run:/);
   assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
+  assert.match(summary, /\n## Repository Label Inventory\n\n### \[example\/repo\]\(https:\/\/github.com\/example\/repo\)\n\n/);
+});
+
+test("renderInventorySummary links shared-label repository names to their repositories", () => {
+  const summary = renderInventorySummary({
+    workflowName: "Inventory-Labels",
+    generatedDate: "2026-06-17",
+    actor: "octocat",
+    repoFilterMode: "repository filter",
+    excludeConfiguredLabels: false,
+    listSimilarities: true,
+    results: [
+      {
+        repository: "example/one",
+        labels: [],
+      },
+      {
+        repository: "example/two",
+        labels: [],
+      },
+    ],
+    sharedLabelGroups: [
+      {
+        label: {
+          name: "bug",
+          color: "d73a4a",
+          description: "Something is not working",
+        },
+        repositories: ["example/one", "example/two"],
+      },
+    ],
+  });
+
+  assert.match(summary, /Repositories:\n- \[example\/one\]\(https:\/\/github.com\/example\/one\)\n- \[example\/two\]\(https:\/\/github.com\/example\/two\)\n/);
 });
 
 test("renderLabelSyncSection appends affected issue and pull request counts to deleted labels", () => {
@@ -226,21 +260,47 @@ test("renderLabelSyncSection appends affected issue and pull request counts to d
     createdLabels: [],
     updatedLabels: [],
     deletedConfiguredLabels: [
-      { name: "bug", affectedIssues: 1, affectedPullRequests: 2 },
-      { name: "cleanup", affectedIssues: 0, affectedPullRequests: 3 },
-      { name: "docs", affectedIssues: 1, affectedPullRequests: 0 },
-      { name: "unused", affectedIssues: 0, affectedPullRequests: 0 },
+      {
+        name: "bug",
+        color: "d73a4a",
+        description: "Something is not working",
+        affectedIssues: 1,
+        affectedPullRequests: 2,
+      },
+      {
+        name: "cleanup",
+        color: "0e8a16",
+        description: "",
+        affectedIssues: 0,
+        affectedPullRequests: 3,
+      },
     ],
-    deletedGithubDefaultLabels: [],
-    deletedMissingLabels: [],
+    deletedGithubDefaultLabels: [
+      {
+        name: "docs",
+        color: "0075ca",
+        description: "Improvements or additions to documentation",
+        affectedIssues: 1,
+        affectedPullRequests: 0,
+      },
+    ],
+    deletedMissingLabels: [
+      {
+        name: "unused",
+        color: "cfd3d7",
+        description: "No longer managed",
+        affectedIssues: 0,
+        affectedPullRequests: 0,
+      },
+    ],
   });
 
   assert.deepEqual(section.lines, [
-    "Deleted labels from deleted-labels config:",
-    "- Deleted `bug` (2 PRs, 1 Issue affected)",
-    "- Deleted `cleanup` (3 PRs affected)",
-    "- Deleted `docs` (1 Issue affected)",
-    "- Deleted `unused`",
+    "Deleted Labels:",
+    "- Deleted `bug` (`#d73a4a`): Something is not working (2 PRs, 1 Issue affected)",
+    "- Deleted `cleanup` (`#0e8a16`) (3 PRs affected)",
+    "- Deleted GitHub default label `docs` (`#0075ca`): Improvements or additions to documentation (1 Issue affected)",
+    "- Deleted unmanaged label `unused` (`#cfd3d7`): No longer managed",
   ]);
 });
 
@@ -280,9 +340,9 @@ test("renderLabelSyncSection appends affected issue and pull request counts to r
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Replaced `bug`: name `bug` -> `type: bug` (2 PRs, 1 Issue affected)",
-    "- Replaced `feature`: name `feature` -> `type: feature` (3 PRs affected)",
-    "- Replaced `stale`: name `stale` -> `status: stale`",
+    "- Replaced `bug`: `bug` -> `type: bug` (2 PRs, 1 Issue affected)",
+    "- Replaced `feature`: `feature` -> `type: feature` (3 PRs affected)",
+    "- Replaced `stale`: `stale` -> `status: stale`",
   ]);
 });
 
@@ -331,8 +391,8 @@ test("renderLabelSyncSection combines label replacements and automatic updates w
 
   assert.deepEqual(section.lines, [
     "Label replacements:",
-    "- Replaced `bug`: name `bug` -> `Bug Fix`, color `#d73a4a` -> `#0e8a16`, description `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
-    "- Replaced `enhancement`: name `enhancement` -> `Enhancement`, color `#a2eeef` -> `#84b6eb`, description `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
+    "- Replaced `bug`: `bug` -> `Bug Fix` | `#d73a4a` -> `#0e8a16` | `Something is not working` -> `Fixes a confirmed defect` (2 PRs, 1 Issue affected)",
+    "- Replaced `enhancement`: `enhancement` -> `Enhancement` | `#a2eeef` -> `#84b6eb` | `New feature or request` -> `Improve an existing mechanic. Please explain the change with a before/after comparison.`",
   ]);
 });
 

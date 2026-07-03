@@ -155,6 +155,6 @@ test("parseTokenPermissions returns token permissions from a JSON object string"
 test("formatSkippedRepository renders a stable skipped repository list item", () => {
   assert.equal(
     formatSkippedRepository({ repository: "example/archive", reason: "archived" }),
-    "`example/archive` - archived",
+    "[example/archive](https://github.com/example/archive) - archived",
   );
 });

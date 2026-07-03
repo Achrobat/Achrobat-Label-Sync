@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { formatSkippedRepository } from "./repository-selection.mjs";
+import { formatRepositoryLink, formatSkippedRepository } from "./repository-selection.mjs";
 
 const defaultChangelogTimeZone = "America/New_York";
 
@@ -69,21 +69,28 @@ function renderColor(color) {
   return `\`#${color}\``;
 }
 
+function renderLabelSpec(label) {
+  const color = label.color ? ` (${renderColor(label.color)})` : "";
+  const description = label.description ? `: ${label.description}` : "";
+
+  return `\`${label.name}\`${color}${description}`;
+}
+
 function renderLabelFieldChanges(before, after) {
   const changes = [];
   const beforeDescription = before.description ?? "";
   const afterDescription = after.description ?? "";
 
   if (before.name !== after.name) {
-    changes.push(`name \`${before.name}\` -> \`${after.name}\``);
+    changes.push(`\`${before.name}\` -> \`${after.name}\``);
   }
 
   if (before.color !== after.color) {
-    changes.push(`color ${renderColor(before.color)} -> ${renderColor(after.color)}`);
+    changes.push(`${renderColor(before.color)} -> ${renderColor(after.color)}`);
   }
 
   if (beforeDescription !== afterDescription) {
-    changes.push(`description \`${beforeDescription}\` -> \`${afterDescription}\``);
+    changes.push(`\`${beforeDescription}\` -> \`${afterDescription}\``);
   }
 
   return changes;
@@ -96,11 +103,11 @@ function renderLabelFieldChangeSuffix(before, after) {
     return "";
   }
 
-  return `: ${changes.join(", ")}`;
+  return `: ${changes.join(" | ")}`;
 }
 
 function renderLabelReplacementLine(oldName, before, after, affectedSuffix = "") {
-  const fallbackDetails = `: name \`${oldName}\` -> \`${after.name}\``;
+  const fallbackDetails = `: \`${oldName}\` -> \`${after.name}\``;
   const details = before && after ? renderLabelFieldChangeSuffix(before, after) || fallbackDetails : fallbackDetails;
 
   return `Replaced \`${oldName}\`${details}${affectedSuffix}`;
@@ -190,7 +197,7 @@ export async function writeChangelog({
     lines.push("");
   } else {
     for (const section of changedSections) {
-      lines.push(`### ${section.repository}`);
+      lines.push(`### ${formatRepositoryLink(section.repository)}`);
       lines.push("");
       lines.push(...section.lines);
       lines.push("");
@@ -242,27 +249,19 @@ export function renderLabelSyncSection(result) {
 
   const created = renderList(
     result.createdLabels,
-    (label) => `Created \`${label.name}\` (${renderColor(label.color)})${label.description ? `: ${label.description}` : ""}`,
+    (label) => `Created ${renderLabelSpec(label)}`,
   );
   pushRenderedList(lines, "Created labels:", created);
 
-  const deletedConfigured = renderList(
-    result.deletedConfiguredLabels,
-    (label) => `Deleted \`${label.name}\`${formatAffectedSuffix(label)}`,
+  const deletedLabels = renderList(
+    [
+      ...result.deletedConfiguredLabels.map((label) => ({ label, prefix: "Deleted" })),
+      ...result.deletedGithubDefaultLabels.map((label) => ({ label, prefix: "Deleted GitHub default label" })),
+      ...result.deletedMissingLabels.map((label) => ({ label, prefix: "Deleted unmanaged label" })),
+    ],
+    ({ label, prefix }) => `${prefix} ${renderLabelSpec(label)}${formatAffectedSuffix(label)}`,
   );
-  pushRenderedList(lines, "Deleted labels from deleted-labels config:", deletedConfigured);
-
-  const deletedGithubDefaults = renderList(
-    result.deletedGithubDefaultLabels,
-    (label) => `Deleted GitHub default label \`${label.name}\`${formatAffectedSuffix(label)}`,
-  );
-  pushRenderedList(lines, "Deleted GitHub default labels:", deletedGithubDefaults);
-
-  const deletedMissing = renderList(
-    result.deletedMissingLabels,
-    (label) => `Deleted unmanaged label \`${label.name}\`${formatAffectedSuffix(label)}`,
-  );
-  pushRenderedList(lines, "Deleted unmanaged labels:", deletedMissing);
+  pushRenderedList(lines, "Deleted Labels:", deletedLabels);
 
   return {
     repository: result.repository,
