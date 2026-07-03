@@ -57,7 +57,7 @@ test("writeChangelog appends unchanged Markdown formatting to the GitHub step su
     assert.doesNotMatch(summary, /Workflow Run:/);
     assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
     assert.match(summary, /- \*\*Test Mode:\*\* True\n/);
-    assert.match(summary, /\n## Changed Repositories\n\n### example\/repo\n\n/);
+    assert.match(summary, /\n## Changed Repositories\n\n### \[example\/repo\]\(https:\/\/github.com\/example\/repo\)\n\n/);
     assert.match(summary, /Created labels:\n- Created `status: ready` \(#0e8a16\): Ready to merge\n\n$/);
     await assert.rejects(fs.stat(path.join(workspace, "changelogs")), { code: "ENOENT" });
   } finally {
@@ -171,8 +171,8 @@ test("writeChangelog includes skipped repositories and failure details when prov
     });
 
     const summary = await fs.readFile(summaryPath, "utf8");
-    assert.match(summary, /## Changed Repositories\n\n### example\/changed\n\n/);
-    assert.match(summary, /## Skipped Repositories\n\n- `example\/archive` - archived\n- `example\/read-only` - read-only\n\n/);
+    assert.match(summary, /## Changed Repositories\n\n### \[example\/changed\]\(https:\/\/github.com\/example\/changed\)\n\n/);
+    assert.match(summary, /## Skipped Repositories\n\n- \[example\/archive\]\(https:\/\/github.com\/example\/archive\) - archived\n- \[example\/read-only\]\(https:\/\/github.com\/example\/read-only\) - read-only\n\n/);
     assert.match(summary, /## Workflow Failure\n\n- PATCH \/repos\/example\/broken\/labels\/bug failed with 500\n$/);
   } finally {
     process.chdir(originalCwd);
@@ -216,6 +216,40 @@ test("renderInventorySummary omits workflow run details", () => {
   assert.match(summary, /- \*\*Generated On:\*\* 2026-06-17\n/);
   assert.doesNotMatch(summary, /Workflow Run:/);
   assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
+  assert.match(summary, /\n## Repository Label Inventory\n\n### \[example\/repo\]\(https:\/\/github.com\/example\/repo\)\n\n/);
+});
+
+test("renderInventorySummary links shared-label repository names to their repositories", () => {
+  const summary = renderInventorySummary({
+    workflowName: "Inventory-Labels",
+    generatedDate: "2026-06-17",
+    actor: "octocat",
+    repoFilterMode: "repository filter",
+    excludeConfiguredLabels: false,
+    listSimilarities: true,
+    results: [
+      {
+        repository: "example/one",
+        labels: [],
+      },
+      {
+        repository: "example/two",
+        labels: [],
+      },
+    ],
+    sharedLabelGroups: [
+      {
+        label: {
+          name: "bug",
+          color: "d73a4a",
+          description: "Something is not working",
+        },
+        repositories: ["example/one", "example/two"],
+      },
+    ],
+  });
+
+  assert.match(summary, /Repositories:\n- \[example\/one\]\(https:\/\/github.com\/example\/one\)\n- \[example\/two\]\(https:\/\/github.com\/example\/two\)\n/);
 });
 
 test("renderLabelSyncSection appends affected issue and pull request counts to deleted labels", () => {

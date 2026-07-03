@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { formatSkippedRepository } from "./repository-selection.mjs";
+import { formatRepositoryLink, formatSkippedRepository } from "./repository-selection.mjs";
 
 const defaultChangelogTimeZone = "America/New_York";
 
@@ -197,7 +197,7 @@ export async function writeChangelog({
     lines.push("");
   } else {
     for (const section of changedSections) {
-      lines.push(`### ${section.repository}`);
+      lines.push(`### ${formatRepositoryLink(section.repository)}`);
       lines.push("");
       lines.push(...section.lines);
       lines.push("");

@@ -134,7 +134,12 @@ export function filterRepositoriesForWriteMode(
 }
 
 export function formatSkippedRepository(skippedRepository) {
-  return `\`${skippedRepository.repository}\` - ${skippedRepository.reason}`;
+  return `${formatRepositoryLink(skippedRepository.repository)} - ${skippedRepository.reason}`;
+}
+
+export function formatRepositoryLink(repositoryName, { serverUrl = process.env.GITHUB_SERVER_URL ?? "https://github.com" } = {}) {
+  const baseUrl = (serverUrl || "https://github.com").replace(/\/+$/, "");
+  return `[${repositoryName}](${baseUrl}/${repositoryName})`;
 }
 
 export function isSourceRepository(repository, sourceRepository, orgName) {
