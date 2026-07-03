@@ -27,7 +27,7 @@ Features:
 3. Update `config/properties.jsonc` with your organization, source repository, and authentication settings.
 4. Configure `config/repository-filter.jsonc` to choose which repositories should be synced.
 5. Set the labels on the source repository to the label set you want to manage.
-6. Run `Config-Label_Sync` once to populate `config/labels.jsonc`.
+6. Run `Config-Label-Sync` once to populate `config/labels.jsonc`.
 7. Run `Org-Label-Sync` to apply the labels across the selected repositories.
 
 ### Config files
@@ -56,7 +56,7 @@ The configured source repository is always skipped by repository filtering. You 
 
 This repository includes seven GitHub Actions workflows:
 
-- `Config-Label_Sync`
+- `Config-Label-Sync`
 - `Config-Reset`
 - `Inventory-Labels`
 - `Validate-Configs`
@@ -69,11 +69,11 @@ This repository includes seven GitHub Actions workflows:
 Use this flow when the source repository labels are the source of truth.
 
 1. Edit labels directly on the configured source repository.
-2. Run `Config-Label_Sync`, or run `Org-Label-Sync` and let it call `Config-Label_Sync` first.
+2. Run `Config-Label-Sync`, or run `Org-Label-Sync` and let it call `Config-Label-Sync` first.
 3. Review the generated changes to `config/labels.jsonc` and `config/deleted-labels.jsonc`.
 4. Run `Org-Label-Sync` to apply the managed label set to the selected repositories.
 
-`Config-Label_Sync` reads the current labels on the source repository, rewrites `config/labels.jsonc`, moves removed managed labels into `config/deleted-labels.jsonc`, validates the default-label config, and commits the config update when something changed.
+`Config-Label-Sync` reads the current labels on the source repository, rewrites `config/labels.jsonc`, moves removed managed labels into `config/deleted-labels.jsonc`, validates the default-label config, and commits the config update when something changed.
 
 ### Config-first flow
 

@@ -17,9 +17,10 @@ import {
 } from "./lib/config-validation.mjs";
 import { renderLabelSyncSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import {
-  filterEligibleRepositories,
+  filterRepositoriesForWriteMode,
   filterRepositories,
   isSourceRepository,
+  parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
@@ -308,6 +309,16 @@ function countMigratedItems(items) {
   );
 }
 
+async function getLabelAffectedCounts(token, repositoryFullName, labelName) {
+  const items = await getIssuesAndPullRequestsWithLabel(token, repositoryFullName, labelName);
+  const counts = countMigratedItems(items);
+
+  return {
+    affectedIssues: counts.issues,
+    affectedPullRequests: counts.pullRequests,
+  };
+}
+
 function hasLabel(item, labelName) {
   const requestedKey = normalizeName(labelName);
   const labels = Array.isArray(item.labels) ? item.labels : [];
@@ -357,13 +368,15 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
     const existingNew = existingByName.get(replacement.newKey);
 
     if (!existingNew) {
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existingOld.name);
+
       replaced += 1;
       result.labelReplacements.push({
         oldName: existingOld.name,
         newName: desiredNew.name,
         mode: "renamed",
-        matchedIssues: null,
-        matchedPullRequests: null,
+        matchedIssues: affected.affectedIssues,
+        matchedPullRequests: affected.affectedPullRequests,
         addedIssues: null,
         addedPullRequests: null,
       });
@@ -501,10 +514,12 @@ async function syncRepository(
     }
 
     deletedConfigured += 1;
+    const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
     result.deletedConfiguredLabels.push({
       name: existing.name,
       color: normalizeColor(existing.color),
       description: normalizeDescription(existing.description),
+      ...affected,
     });
     result.hasChanges = true;
     console.log(`  - ${existing.name} (deleted label config)`);
@@ -529,10 +544,12 @@ async function syncRepository(
       }
 
       deletedGithubDefaults += 1;
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
       result.deletedGithubDefaultLabels.push({
         name: existing.name,
         color: normalizeColor(existing.color),
         description: normalizeDescription(existing.description),
+        ...affected,
       });
       result.hasChanges = true;
       console.log(`  - ${existing.name} (GitHub default label)`);
@@ -558,10 +575,12 @@ async function syncRepository(
       }
 
       deletedMissing += 1;
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
       result.deletedMissingLabels.push({
         name: existing.name,
         color: normalizeColor(existing.color),
         description: normalizeDescription(existing.description),
+        ...affected,
       });
       result.hasChanges = true;
       console.log(`  - ${existing.name} (delete missing)`);
@@ -612,6 +631,7 @@ async function main() {
 
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
   const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
   assert(orgName, "ORG_NAME, GITHUB_REPOSITORY_OWNER, or properties.organization is required to discover organization repositories.");
 
@@ -620,9 +640,9 @@ async function main() {
   const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, orgName, properties.sourceRepository)
     : filterRepositories(discoveredRepositories, orgName, repositoryFilter, properties.sourceRepository);
-  const { repositories, skippedRepositories } = filterEligibleRepositories(
+  const { repositories, skippedRepositories } = filterRepositoriesForWriteMode(
     selectedRepositories,
-    { orgName, requireWriteAccess: true },
+    { orgName, dryRun, tokenPermissions },
   );
 
   if (usingTargetRepositoryOverride) {
@@ -648,9 +668,8 @@ async function main() {
     await writeChangelog({
       workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
       dryRun,
-      summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+      summaryLines: ({ generatedDate, metadata }) => [
         `Generated On: ${generatedDate}`,
-        `Workflow Run: ${workflowRun}`,
         `Actor: ${metadata.actor || "Unavailable"}`,
         `Test Mode: ${formatDisplayBoolean(dryRun)}`,
         `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,

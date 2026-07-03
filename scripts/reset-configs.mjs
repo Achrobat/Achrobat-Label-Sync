@@ -5,7 +5,7 @@ const workspaceRoot = process.cwd();
 const configDir = path.join(workspaceRoot, "config");
 
 const configDefaults = {
-  "deleted-labels.jsonc": `// Labels removed from config/labels.jsonc by Config-Label_Sync are moved here.
+  "deleted-labels.jsonc": `// Labels removed from config/labels.jsonc by Config-Label-Sync are moved here.
 // Org-Label-Sync deletes matching label names from selected repositories.
 //
 // Example:

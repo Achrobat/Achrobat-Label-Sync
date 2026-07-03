@@ -1,4 +1,4 @@
-name: Config-Label_Sync
+name: Config-Label-Sync
 
 on:
   workflow_dispatch:

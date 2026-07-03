@@ -3,9 +3,10 @@ import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties, validateRepositoryFilter } from "./lib/config-validation.mjs";
 import { renderRemoveLabelsSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import {
-  filterEligibleRepositories,
+  filterRepositoriesForWriteMode,
   filterRepositories,
   isSourceRepository,
+  parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
@@ -259,6 +260,7 @@ async function processRepository(token, repository, requestedLabel) {
 
   return {
     repository: repository.full_name,
+    labelName: requestedLabel,
     removedIssues,
     removedPullRequests,
   };
@@ -288,6 +290,7 @@ async function main() {
 
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
 
   const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
@@ -299,9 +302,9 @@ async function main() {
       repositoryFilter,
       properties.sourceRepository,
     );
-  const { repositories, skippedRepositories } = filterEligibleRepositories(
+  const { repositories, skippedRepositories } = filterRepositoriesForWriteMode(
     selectedRepositories,
-    { orgName: properties.organization, requireWriteAccess: true },
+    { orgName: properties.organization, dryRun, tokenPermissions },
   );
 
   if (usingTargetRepositoryOverride) {
@@ -325,9 +328,8 @@ async function main() {
     await writeChangelog({
       workflowName: dryRun ? "Remove-Labels Fake" : "Remove-Labels",
       dryRun,
-      summaryLines: ({ generatedDate, metadata, workflowRun }) => [
+      summaryLines: ({ generatedDate, metadata }) => [
         `Generated On: ${generatedDate}`,
-        `Workflow Run: ${workflowRun}`,
         `Actor: ${metadata.actor || "Unavailable"}`,
         `Test Mode: ${formatDisplayBoolean(dryRun)}`,
         `Repo Filter Mode: ${formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterMode)}`,
