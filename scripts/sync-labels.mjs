@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   assert,
   labelsExactlyMatch,
@@ -360,6 +361,21 @@ async function migrateLabelAssignments(token, repositoryFullName, oldLabelName, 
   };
 }
 
+export function createLabelReplacementEntry({ existingOld, desiredNew, mode, counts }) {
+  return {
+    oldName: existingOld.name,
+    newName: desiredNew.name,
+    mode,
+    ...counts,
+    before: {
+      name: existingOld.name,
+      color: normalizeColor(existingOld.color),
+      description: normalizeDescription(existingOld.description),
+    },
+    after: desiredNew,
+  };
+}
+
 async function applyLabelReplacements(token, repository, replacements, desiredByName, existingByName, workingLabels, result) {
   let replaced = 0;
 
@@ -377,21 +393,19 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
       const affected = await getLabelAffectedCounts(token, repository.full_name, existingOld.name);
 
       replaced += 1;
-      result.labelReplacements.push({
-        oldName: existingOld.name,
-        newName: desiredNew.name,
-        mode: "renamed",
-        matchedIssues: affected.affectedIssues,
-        matchedPullRequests: affected.affectedPullRequests,
-        addedIssues: null,
-        addedPullRequests: null,
-        before: {
-          name: existingOld.name,
-          color: normalizeColor(existingOld.color),
-          description: normalizeDescription(existingOld.description),
-        },
-        after: desiredNew,
-      });
+      result.labelReplacements.push(
+        createLabelReplacementEntry({
+          existingOld,
+          desiredNew,
+          mode: "renamed",
+          counts: {
+            matchedIssues: affected.affectedIssues,
+            matchedPullRequests: affected.affectedPullRequests,
+            addedIssues: null,
+            addedPullRequests: null,
+          },
+        }),
+      );
       result.hasChanges = true;
       console.log(`  ~ ${existingOld.name} -> ${desiredNew.name} (replacement rename)`);
 
@@ -412,12 +426,14 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
     const migration = await migrateLabelAssignments(token, repository.full_name, existingOld.name, desiredNew.name);
 
     replaced += 1;
-    result.labelReplacements.push({
-      oldName: existingOld.name,
-      newName: desiredNew.name,
-      mode: "migrated",
-      ...migration,
-    });
+    result.labelReplacements.push(
+      createLabelReplacementEntry({
+        existingOld,
+        desiredNew,
+        mode: "migrated",
+        counts: migration,
+      }),
+    );
     result.hasChanges = true;
     console.log(
       `  ~ ${existingOld.name} -> ${desiredNew.name} (replacement migration: issues=${migration.matchedIssues}, pullRequests=${migration.matchedPullRequests})`,
@@ -741,7 +757,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
