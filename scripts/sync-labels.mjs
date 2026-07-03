@@ -308,6 +308,16 @@ function countMigratedItems(items) {
   );
 }
 
+async function getLabelAffectedCounts(token, repositoryFullName, labelName) {
+  const items = await getIssuesAndPullRequestsWithLabel(token, repositoryFullName, labelName);
+  const counts = countMigratedItems(items);
+
+  return {
+    affectedIssues: counts.issues,
+    affectedPullRequests: counts.pullRequests,
+  };
+}
+
 function hasLabel(item, labelName) {
   const requestedKey = normalizeName(labelName);
   const labels = Array.isArray(item.labels) ? item.labels : [];
@@ -357,13 +367,15 @@ async function applyLabelReplacements(token, repository, replacements, desiredBy
     const existingNew = existingByName.get(replacement.newKey);
 
     if (!existingNew) {
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existingOld.name);
+
       replaced += 1;
       result.labelReplacements.push({
         oldName: existingOld.name,
         newName: desiredNew.name,
         mode: "renamed",
-        matchedIssues: null,
-        matchedPullRequests: null,
+        matchedIssues: affected.affectedIssues,
+        matchedPullRequests: affected.affectedPullRequests,
         addedIssues: null,
         addedPullRequests: null,
       });
@@ -501,10 +513,12 @@ async function syncRepository(
     }
 
     deletedConfigured += 1;
+    const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
     result.deletedConfiguredLabels.push({
       name: existing.name,
       color: normalizeColor(existing.color),
       description: normalizeDescription(existing.description),
+      ...affected,
     });
     result.hasChanges = true;
     console.log(`  - ${existing.name} (deleted label config)`);
@@ -529,10 +543,12 @@ async function syncRepository(
       }
 
       deletedGithubDefaults += 1;
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
       result.deletedGithubDefaultLabels.push({
         name: existing.name,
         color: normalizeColor(existing.color),
         description: normalizeDescription(existing.description),
+        ...affected,
       });
       result.hasChanges = true;
       console.log(`  - ${existing.name} (GitHub default label)`);
@@ -558,10 +574,12 @@ async function syncRepository(
       }
 
       deletedMissing += 1;
+      const affected = await getLabelAffectedCounts(token, repository.full_name, existing.name);
       result.deletedMissingLabels.push({
         name: existing.name,
         color: normalizeColor(existing.color),
         description: normalizeDescription(existing.description),
+        ...affected,
       });
       result.hasChanges = true;
       console.log(`  - ${existing.name} (delete missing)`);

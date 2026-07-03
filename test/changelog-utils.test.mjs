@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { writeChangelog } from "../scripts/lib/changelog-utils.mjs";
+import { renderLabelSyncSection, renderRemoveLabelsSection, writeChangelog } from "../scripts/lib/changelog-utils.mjs";
 import { renderInventorySummary } from "../scripts/inventory-labels.mjs";
 
 test("writeChangelog appends unchanged Markdown formatting to the GitHub step summary", async () => {
@@ -216,4 +216,88 @@ test("renderInventorySummary omits workflow run details", () => {
   assert.match(summary, /- \*\*Generated On:\*\* 2026-06-17\n/);
   assert.doesNotMatch(summary, /Workflow Run:/);
   assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
+});
+
+test("renderLabelSyncSection appends affected issue and pull request counts to deleted labels", () => {
+  const section = renderLabelSyncSection({
+    repository: "example/repo",
+    hasChanges: true,
+    labelReplacements: [],
+    createdLabels: [],
+    updatedLabels: [],
+    deletedConfiguredLabels: [
+      { name: "bug", affectedIssues: 1, affectedPullRequests: 2 },
+      { name: "cleanup", affectedIssues: 0, affectedPullRequests: 3 },
+      { name: "docs", affectedIssues: 1, affectedPullRequests: 0 },
+      { name: "unused", affectedIssues: 0, affectedPullRequests: 0 },
+    ],
+    deletedGithubDefaultLabels: [],
+    deletedMissingLabels: [],
+  });
+
+  assert.deepEqual(section.lines, [
+    "Deleted labels from deleted-labels config:",
+    "- Deleted `bug` (2 PRs, 1 Issue affected)",
+    "- Deleted `cleanup` (3 PRs affected)",
+    "- Deleted `docs` (1 Issue affected)",
+    "- Deleted `unused`",
+  ]);
+});
+
+test("renderLabelSyncSection appends affected issue and pull request counts to replacements", () => {
+  const section = renderLabelSyncSection({
+    repository: "example/repo",
+    hasChanges: true,
+    labelReplacements: [
+      {
+        oldName: "bug",
+        newName: "type: bug",
+        mode: "renamed",
+        matchedIssues: 1,
+        matchedPullRequests: 2,
+      },
+      {
+        oldName: "feature",
+        newName: "type: feature",
+        mode: "migrated",
+        matchedIssues: 0,
+        matchedPullRequests: 3,
+      },
+      {
+        oldName: "stale",
+        newName: "status: stale",
+        mode: "migrated",
+        matchedIssues: 0,
+        matchedPullRequests: 0,
+      },
+    ],
+    createdLabels: [],
+    updatedLabels: [],
+    deletedConfiguredLabels: [],
+    deletedGithubDefaultLabels: [],
+    deletedMissingLabels: [],
+  });
+
+  assert.deepEqual(section.lines, [
+    "Label replacements:",
+    "- Renamed `bug` to `type: bug` (2 PRs, 1 Issue affected)",
+    "- Replaced `feature` with `type: feature` (3 PRs affected)",
+    "- Replaced `stale` with `status: stale`",
+  ]);
+});
+
+test("renderRemoveLabelsSection includes a per-repository affected count summary", () => {
+  const section = renderRemoveLabelsSection({
+    repository: "example/repo",
+    removedIssues: [
+      { number: 7, label: "bug", url: "https://github.com/example/repo/issues/7" },
+    ],
+    removedPullRequests: [
+      { number: 3, label: "bug", url: "https://github.com/example/repo/pull/3" },
+      { number: 5, label: "bug", url: "https://github.com/example/repo/pull/5" },
+    ],
+  });
+
+  assert.equal(section.lines[0], "Removed labels:");
+  assert.equal(section.lines[1], "- Removed `bug` (2 PRs, 1 Issue affected)");
 });

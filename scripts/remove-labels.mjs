@@ -259,6 +259,7 @@ async function processRepository(token, repository, requestedLabel) {
 
   return {
     repository: repository.full_name,
+    labelName: requestedLabel,
     removedIssues,
     removedPullRequests,
   };

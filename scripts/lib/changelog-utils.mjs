@@ -39,6 +39,16 @@ function renderList(items, renderItem) {
   return items.map((item) => `- ${renderItem(item)}`).join("\n");
 }
 
+function pushRenderedList(lines, heading, renderedList) {
+  if (!renderedList) {
+    return;
+  }
+
+  lines.push(heading);
+  lines.push(...renderedList.split("\n"));
+  lines.push("");
+}
+
 function renderSummaryLine(line) {
   const separatorIndex = line.indexOf(":");
 
@@ -57,6 +67,30 @@ function isWorkflowRunSummaryLine(line) {
 
 function renderColor(color) {
   return `\`#${color}\``;
+}
+
+function formatCount(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatAffectedSuffix({ affectedIssues, affectedPullRequests, matchedIssues, matchedPullRequests }) {
+  const issueCount = affectedIssues ?? matchedIssues ?? 0;
+  const pullRequestCount = affectedPullRequests ?? matchedPullRequests ?? 0;
+  const parts = [];
+
+  if (pullRequestCount > 0) {
+    parts.push(formatCount(pullRequestCount, "PR", "PRs"));
+  }
+
+  if (issueCount > 0) {
+    parts.push(formatCount(issueCount, "Issue", "Issues"));
+  }
+
+  if (parts.length === 0) {
+    return "";
+  }
+
+  return ` (${parts.join(", ")} affected)`;
 }
 
 export function getWorkflowMetadata(workflowName) {
@@ -158,27 +192,21 @@ export function renderLabelSyncSection(result) {
   const lines = [];
 
   const replacements = renderList(result.labelReplacements, (entry) => {
+    const affectedSuffix = formatAffectedSuffix(entry);
+
     if (entry.mode === "renamed") {
-      return `Renamed \`${entry.oldName}\` to \`${entry.newName}\``;
+      return `Renamed \`${entry.oldName}\` to \`${entry.newName}\`${affectedSuffix}`;
     }
 
-    return `Replaced \`${entry.oldName}\` with \`${entry.newName}\` on ${entry.matchedIssues} issues and ${entry.matchedPullRequests} pull requests`;
+    return `Replaced \`${entry.oldName}\` with \`${entry.newName}\`${affectedSuffix}`;
   });
-  if (replacements) {
-    lines.push("Label replacements:");
-    lines.push(replacements);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Label replacements:", replacements);
 
   const created = renderList(
     result.createdLabels,
     (label) => `Created \`${label.name}\` (${renderColor(label.color)})${label.description ? `: ${label.description}` : ""}`,
   );
-  if (created) {
-    lines.push("Created labels:");
-    lines.push(created);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Created labels:", created);
 
   const updated = renderList(result.updatedLabels, (entry) => {
     const changes = [];
@@ -197,41 +225,25 @@ export function renderLabelSyncSection(result) {
 
     return `Updated \`${entry.before.name}\`: ${changes.join(", ")}`;
   });
-  if (updated) {
-    lines.push("Updated labels:");
-    lines.push(updated);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Updated labels:", updated);
 
   const deletedConfigured = renderList(
     result.deletedConfiguredLabels,
-    (label) => `Deleted \`${label.name}\``,
+    (label) => `Deleted \`${label.name}\`${formatAffectedSuffix(label)}`,
   );
-  if (deletedConfigured) {
-    lines.push("Deleted labels from deleted-labels config:");
-    lines.push(deletedConfigured);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Deleted labels from deleted-labels config:", deletedConfigured);
 
   const deletedGithubDefaults = renderList(
     result.deletedGithubDefaultLabels,
-    (label) => `Deleted GitHub default label \`${label.name}\``,
+    (label) => `Deleted GitHub default label \`${label.name}\`${formatAffectedSuffix(label)}`,
   );
-  if (deletedGithubDefaults) {
-    lines.push("Deleted GitHub default labels:");
-    lines.push(deletedGithubDefaults);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Deleted GitHub default labels:", deletedGithubDefaults);
 
   const deletedMissing = renderList(
     result.deletedMissingLabels,
-    (label) => `Deleted unmanaged label \`${label.name}\``,
+    (label) => `Deleted unmanaged label \`${label.name}\`${formatAffectedSuffix(label)}`,
   );
-  if (deletedMissing) {
-    lines.push("Deleted unmanaged labels:");
-    lines.push(deletedMissing);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Deleted unmanaged labels:", deletedMissing);
 
   return {
     repository: result.repository,
@@ -242,26 +254,31 @@ export function renderLabelSyncSection(result) {
 
 export function renderRemoveLabelsSection(result) {
   const lines = [];
+  const affectedIssues = result.removedIssues.length;
+  const affectedPullRequests = result.removedPullRequests.length;
+  const affectedSuffix = formatAffectedSuffix({ affectedIssues, affectedPullRequests });
+  const removedLabel = result.labelName
+    ?? result.removedPullRequests[0]?.label
+    ?? result.removedIssues[0]?.label
+    ?? null;
+
+  if (removedLabel && affectedSuffix) {
+    lines.push("Removed labels:");
+    lines.push(`- Removed \`${removedLabel}\`${affectedSuffix}`);
+    lines.push("");
+  }
 
   const removedIssues = renderList(
     result.removedIssues,
     (item) => `Removed \`${item.label}\` from issue [#${item.number}](${item.url})`,
   );
-  if (removedIssues) {
-    lines.push("Issues:");
-    lines.push(removedIssues);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Issues:", removedIssues);
 
   const removedPullRequests = renderList(
     result.removedPullRequests,
     (item) => `Removed \`${item.label}\` from pull request [#${item.number}](${item.url})`,
   );
-  if (removedPullRequests) {
-    lines.push("Pull requests:");
-    lines.push(removedPullRequests);
-    lines.push("");
-  }
+  pushRenderedList(lines, "Pull requests:", removedPullRequests);
 
   return {
     repository: result.repository,
