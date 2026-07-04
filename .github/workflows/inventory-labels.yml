@@ -1,4 +1,4 @@
-name: Inventory-Labels
+name: 02 - Inventory-Labels
 
 on:
   workflow_dispatch:

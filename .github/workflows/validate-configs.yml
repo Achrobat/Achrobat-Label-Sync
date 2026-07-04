@@ -1,4 +1,4 @@
-name: Validate-Configs
+name: 99 - Validate-Configs
 
 on:
   push:
