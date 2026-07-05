@@ -145,6 +145,29 @@ test("filterRepositoriesForWriteMode keeps repositories when token has label wri
   assert.deepEqual(skippedRepositories, []);
 });
 
+test("filterEligibleRepositories can use contents write token permissions for workflow distribution", () => {
+  const repositories = [
+    {
+      full_name: "example/app-token-contents-write",
+      name: "app-token-contents-write",
+      archived: false,
+      permissions: { pull: true, push: false, maintain: false, admin: false },
+    },
+  ];
+
+  const { repositories: eligible, skippedRepositories } = filterEligibleRepositories(
+    repositories,
+    {
+      requireWriteAccess: true,
+      tokenPermissions: { contents: "write" },
+      tokenWritePermission: "contents",
+    },
+  );
+
+  assert.deepEqual(eligible.map((repository) => repository.full_name), ["example/app-token-contents-write"]);
+  assert.deepEqual(skippedRepositories, []);
+});
+
 test("parseTokenPermissions returns token permissions from a JSON object string", () => {
   assert.deepEqual(
     parseTokenPermissions('{"issues":"write","contents":"read"}'),

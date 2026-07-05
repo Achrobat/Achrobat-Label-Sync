@@ -19,6 +19,8 @@ Features:
 - Support whitelist or blacklist repository selection
 - Reset selected config files back to default unconfigured versions
 - Write changelogs to GitHub Actions workflow summaries for real workflow changes and dry-run previews
+- Enforce centrally configured PR label requirements through a reusable required-check workflow
+- Distribute PR label-test caller workflows to selected organization repositories
 
 ## How to setup
 
@@ -39,6 +41,7 @@ All project config lives in `config/` and uses JSONC, so comments are allowed.
 - `config/deleted-labels.jsonc`: labels that should be deleted from target repositories
 - `config/github-default-labels.jsonc`: exact GitHub default label specs that can be pruned
 - `config/repository-filter.jsonc`: whitelist or blacklist rules for repository selection
+- `config/label-test-workflow-config.jsonc`: PR label-test rules and separate caller workflow distribution repository lists
 
 The configured source repository is always skipped by repository filtering. You do not need to add it to the whitelist or blacklist.
 
@@ -54,11 +57,13 @@ The configured source repository is always skipped by repository filtering. You 
 
 ## How to use the workflows
 
-This repository includes seven GitHub Actions workflows:
+This repository includes nine GitHub Actions workflows:
 
 - `Config-Label-Sync`
 - `Config-Reset`
+- `Distribute-Label-Test-Workflows`
 - `Inventory-Labels`
+- `Label Test`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
 - `Org-Label-Sync`
@@ -130,6 +135,59 @@ Inputs:
 
 Inventory skips archived repositories, but keeps non-archived read-only repositories because inventory does not write to them. If the run fails after inventorying some repositories, the workflow still writes the accumulated inventory summary before failing.
 
+### Label Test
+
+`Label Test` is a reusable workflow that target repositories can call from a small caller workflow. It is intended to be added as a required branch protection check on pull requests.
+
+The rules live only in `config/label-test-workflow-config.jsonc` in this repository:
+
+```jsonc
+{
+  "requiredLabels": [
+    // "Bug",
+    // "Feature"
+  ],
+  "failingLabels": [
+    // "Blocked",
+    // "Do Not Merge"
+  ],
+  "protectedLabelApprovals": [
+    // { "label": "Affects Balance", "approver": "teams/admin" },
+    // { "label": "Affects Balance", "approver": "UltraProdigy" }
+  ],
+  "workflowDistribution": {
+    "whitelist": [],
+    "blacklist": []
+  }
+}
+```
+
+Behavior:
+
+- If `requiredLabels` is empty, the required-label gate is disabled and the check can pass with any labels or no labels.
+- If `requiredLabels` has entries, a PR must have at least one matching label.
+- Any matching `failingLabels` entry fails the check.
+- Failing labels override required labels.
+- If a protected label is present, at least one configured approver for that label must have latest effective review state `APPROVED`.
+- Plain approvers such as `UltraProdigy` are GitHub users.
+- Approvers prefixed with `teams/`, such as `teams/admin`, are GitHub team slugs in the configured organization.
+
+For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
+
+### Distribute-Label-Test-Workflows
+
+Run `Distribute-Label-Test-Workflows` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+
+Inputs:
+
+- `repository_selection_mode`: choose `whitelist` or `blacklist` from `config/label-test-workflow-config.jsonc`
+- `delivery_mode`: choose `direct_commit` or `open_pr`
+- `dry_run`: preview without writing
+
+`open_pr` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
+
+After the caller workflow is merged into a target repository, make the `Label Test` check required in that repository's branch protection rules.
+
 ### Config-Reset
 
 Run `Config-Reset` manually when you want to restore selected config files to their default unconfigured versions.
@@ -139,6 +197,7 @@ Inputs:
 - `reset_deleted_labels`: reset `config/deleted-labels.jsonc` to an empty deleted-label list
 - `reset_github_default_labels`: reset `config/github-default-labels.jsonc` to the standard GitHub default label specs
 - `reset_labels`: reset `config/labels.jsonc` to an empty managed-label list
+- `reset_label_test_workflow_config`: reset `config/label-test-workflow-config.jsonc` to empty label-test rules and empty workflow distribution lists
 - `reset_repository_filter`: reset `config/repository-filter.jsonc` to empty whitelist mode
 - `confirmation`: must be exactly `CONFIRM` (will fail otherwise)
 
@@ -156,6 +215,8 @@ Validation checks include:
 - Invalid label colors
 - Invalid repository names
 - Repository filter shape
+- Label Test workflow config shape
+- Label Test user and `teams/<slug>` approver syntax
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 

@@ -60,19 +60,27 @@ export function parseTokenPermissions(value) {
   return parsed;
 }
 
-export function hasTokenLabelWriteAccess(tokenPermissions) {
+export function hasTokenWriteAccess(tokenPermissions, tokenWritePermission = "labels") {
   if (!tokenPermissions || typeof tokenPermissions !== "object") {
     return null;
+  }
+
+  if (tokenWritePermission === "contents") {
+    return tokenPermissions.contents === "write";
   }
 
   return tokenPermissions.issues === "write" || tokenPermissions.pull_requests === "write";
 }
 
-export function hasRepositoryWriteAccess(repository, { tokenPermissions = null } = {}) {
-  const hasTokenWriteAccess = hasTokenLabelWriteAccess(tokenPermissions);
+export function hasTokenLabelWriteAccess(tokenPermissions) {
+  return hasTokenWriteAccess(tokenPermissions, "labels");
+}
 
-  if (hasTokenWriteAccess !== null) {
-    return hasTokenWriteAccess;
+export function hasRepositoryWriteAccess(repository, { tokenPermissions = null, tokenWritePermission = "labels" } = {}) {
+  const hasTokenAccess = hasTokenWriteAccess(tokenPermissions, tokenWritePermission);
+
+  if (hasTokenAccess !== null) {
+    return hasTokenAccess;
   }
 
   const permissions = repository.permissions;
@@ -84,12 +92,15 @@ export function hasRepositoryWriteAccess(repository, { tokenPermissions = null }
   return Boolean(permissions.admin || permissions.maintain || permissions.push);
 }
 
-export function getRepositorySkipReason(repository, { requireWriteAccess = true, tokenPermissions = null } = {}) {
+export function getRepositorySkipReason(
+  repository,
+  { requireWriteAccess = true, tokenPermissions = null, tokenWritePermission = "labels" } = {},
+) {
   if (repository.archived) {
     return "archived";
   }
 
-  if (requireWriteAccess && !hasRepositoryWriteAccess(repository, { tokenPermissions })) {
+  if (requireWriteAccess && !hasRepositoryWriteAccess(repository, { tokenPermissions, tokenWritePermission })) {
     return "read-only";
   }
 
@@ -98,13 +109,13 @@ export function getRepositorySkipReason(repository, { requireWriteAccess = true,
 
 export function filterEligibleRepositories(
   repositories,
-  { orgName = "", requireWriteAccess = true, tokenPermissions = null } = {},
+  { orgName = "", requireWriteAccess = true, tokenPermissions = null, tokenWritePermission = "labels" } = {},
 ) {
   const eligibleRepositories = [];
   const skippedRepositories = [];
 
   for (const repository of repositories) {
-    const reason = getRepositorySkipReason(repository, { requireWriteAccess, tokenPermissions });
+    const reason = getRepositorySkipReason(repository, { requireWriteAccess, tokenPermissions, tokenWritePermission });
 
     if (reason) {
       skippedRepositories.push({

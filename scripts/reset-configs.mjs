@@ -92,6 +92,44 @@ const configDefaults = {
 // ]
 []
 `,
+  "label-test-workflow-config.jsonc": `// Central configuration for the Label Test reusable workflow and its caller workflow distributor.
+// Plain names such as "UltraProdigy" are GitHub users.
+// Names prefixed with "teams/" such as "teams/admin" are GitHub team slugs in config/properties.jsonc "organization".
+{
+  // If this list is empty, the required-label gate is disabled and any label state can pass this gate.
+  // If this list has labels, a PR must have at least one of them.
+  "requiredLabels": [
+    // "Bug",
+    // "Feature"
+  ],
+
+  // Any matching PR label in this list fails the check.
+  "failingLabels": [
+    // "Blocked",
+    // "Do Not Merge"
+  ],
+
+  // If a listed label is present on a PR, at least one listed user or team member for that label must have
+  // latest effective review state APPROVED.
+  "protectedLabelApprovals": [
+    // { "label": "Affects Balance", "approver": "teams/admin" },
+    // { "label": "Affects Balance", "approver": "UltraProdigy" }
+  ],
+
+  // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
+  // when it is manually run.
+  "workflowDistribution": {
+    "whitelist": [
+      // "sandbox-repo",
+      // "your-org-name/important-repo"
+    ],
+    "blacklist": [
+      // "do-not-touch",
+      // "your-org-name/private-internal-tools"
+    ]
+  }
+}
+`,
   "repository-filter.jsonc": `// Set to true to sync only the repositories listed in "whitelist".
 // Set to false to sync every discovered org repository except those listed in "blacklist".
 // The configured source repository does not need to be listed here and is skipped even if listed.
@@ -117,6 +155,7 @@ const resetInputs = [
   ["RESET_DELETED_LABELS", "deleted-labels.jsonc"],
   ["RESET_GITHUB_DEFAULT_LABELS", "github-default-labels.jsonc"],
   ["RESET_LABELS", "labels.jsonc"],
+  ["RESET_LABEL_TEST_WORKFLOW_CONFIG", "label-test-workflow-config.jsonc"],
   ["RESET_REPOSITORY_FILTER", "repository-filter.jsonc"],
 ];
 

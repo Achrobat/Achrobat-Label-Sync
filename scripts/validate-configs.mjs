@@ -27,6 +27,8 @@ async function main() {
   await runValidation("sync-labels.mjs");
   await runValidation("reverse-config-label-sync.mjs");
   await runValidation("remove-labels.mjs");
+  await runValidation("check-pr-label-policy.mjs");
+  await runValidation("distribute-label-test-workflows.mjs");
 }
 
 main().catch((error) => {

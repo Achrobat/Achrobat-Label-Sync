@@ -1,0 +1,74 @@
+name: Label Test
+
+on:
+  workflow_call:
+    inputs:
+      label_sync_repository:
+        description: "Repository that contains the central Label Test workflow config and scripts."
+        required: true
+        type: string
+      label_sync_ref:
+        description: "Ref to check out from the central Label Sync repository."
+        required: true
+        type: string
+      target_repository:
+        description: "Repository containing the pull request being checked."
+        required: true
+        type: string
+      pull_request_number:
+        description: "Pull request number to evaluate."
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  label-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out Label Sync repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.label_sync_repository }}
+          ref: ${{ inputs.label_sync_ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Load properties
+        id: properties
+        env:
+          GITHUB_REPOSITORY: ${{ inputs.label_sync_repository }}
+        run: node scripts/export-properties.mjs
+
+      - name: Resolve PAT auth token
+        id: pat_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'pat' }}
+        env:
+          AUTH_MODE: pat
+          PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Resolve GitHub App auth token
+        id: app_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'githubApp' }}
+        env:
+          AUTH_MODE: githubApp
+          GITHUB_APP_ID: ${{ secrets[steps.properties.outputs.github_app_id_secret_name] }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets[steps.properties.outputs.github_app_private_key_secret_name] }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Check PR labels and approvals
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-pr-label-policy.mjs
