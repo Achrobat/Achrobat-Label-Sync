@@ -1,8 +1,13 @@
-name: 03 - Distribute-Label-Test-Workflows
+name: 04 - Distribute-Label-Workflow
 
 on:
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: "[TEST MODE] Preview selected repositories and workflow changes without writing."
+        required: false
+        type: boolean
+        default: false
       repository_selection_mode:
         description: "Choose which repository list from config/label-test-workflow-config.jsonc to use."
         required: true
@@ -15,13 +20,8 @@ on:
         required: true
         type: choice
         options:
-          - direct_commit
-          - open_pr
-      dry_run:
-        description: "[TEST MODE] Preview selected repositories and workflow changes without writing."
-        required: false
-        type: boolean
-        default: false
+          - Direct Commit
+          - Pull Request
 
 permissions:
   contents: write

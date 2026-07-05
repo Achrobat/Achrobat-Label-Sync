@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assert, readJsonc } from "./lib/config-utils.mjs";
@@ -85,7 +86,7 @@ function decodeBase64(value) {
 }
 
 export function generateCallerWorkflow({ sourceRepository, sourceRef }) {
-  return `name: Label Test
+  return `name: 97 - Label Test
 
 on:
   pull_request_target:
@@ -118,6 +119,123 @@ jobs:
       pull_request_number: \${{ github.event.pull_request.number }}
     secrets: inherit
 `;
+}
+
+export function normalizeDeliveryMode(value) {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+
+  if (normalized === "direct_commit") {
+    return "direct_commit";
+  }
+
+  if (normalized === "pull_request" || normalized === "open_pr") {
+    return "open_pr";
+  }
+
+  return normalized;
+}
+
+function displayBoolean(value) {
+  return value ? "True" : "False";
+}
+
+function displayRepositorySelectionMode(value) {
+  return value === "whitelist" ? "Whitelist" : "Blacklist";
+}
+
+function displayDeliveryMode(value) {
+  return value === "open_pr" ? "Pull Request" : "Direct Commit";
+}
+
+function displayStatus(status) {
+  const labels = {
+    created: "Created",
+    updated: "Updated",
+    unchanged: "Unchanged",
+    would_create: "Would create",
+    would_update: "Would update",
+    failed: "Failed",
+  };
+
+  return labels[status] ?? status;
+}
+
+function countResultsByStatus(results) {
+  return results.reduce((counts, result) => {
+    counts[result.status] = (counts[result.status] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function escapeMarkdownTableCell(value) {
+  return String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function formatPullRequest(result) {
+  if (!result.pullRequest?.html_url) {
+    return "";
+  }
+
+  return `[PR #${result.pullRequest.number}](${result.pullRequest.html_url})`;
+}
+
+export function renderDistributionSummaryMarkdown({
+  generatedDate,
+  actor,
+  dryRun,
+  repositorySelectionMode,
+  deliveryMode,
+  selectedRepositories,
+  skippedRepositories,
+  results,
+}) {
+  const counts = countResultsByStatus(results);
+  const lines = [
+    `# ${dryRun ? "04 - Distribute-Label-Workflow Fake" : "04 - Distribute-Label-Workflow"}`,
+    "",
+    `Generated On: ${generatedDate}`,
+    `Actor: ${actor || "Unavailable"}`,
+    `Test Mode: ${displayBoolean(dryRun)}`,
+    `Repository Selection Mode: ${displayRepositorySelectionMode(repositorySelectionMode)}`,
+    `Delivery Mode: ${displayDeliveryMode(deliveryMode)}`,
+    `Repositories Selected: ${selectedRepositories.length}`,
+    `Repositories Skipped: ${skippedRepositories.length}`,
+    `Created: ${counts.created ?? 0}`,
+    `Updated: ${counts.updated ?? 0}`,
+    `Would Create: ${counts.would_create ?? 0}`,
+    `Would Update: ${counts.would_update ?? 0}`,
+    `Unchanged: ${counts.unchanged ?? 0}`,
+    `Failed: ${counts.failed ?? 0}`,
+    "",
+    "## Repository Results",
+    "",
+  ];
+
+  if (results.length === 0) {
+    lines.push("No repositories were processed.");
+  } else {
+    lines.push("| Repository | Result | Branch | Pull Request |");
+    lines.push("| --- | --- | --- | --- |");
+
+    for (const result of results) {
+      const resultText = result.error
+        ? `${displayStatus(result.status)}: ${result.error}`
+        : displayStatus(result.status);
+      lines.push(
+        `| ${escapeMarkdownTableCell(result.repository)} | ${escapeMarkdownTableCell(resultText)} | ${escapeMarkdownTableCell(result.branch)} | ${formatPullRequest(result)} |`,
+      );
+    }
+  }
+
+  if (skippedRepositories.length > 0) {
+    lines.push("", "## Skipped Repositories", "");
+
+    for (const skippedRepository of skippedRepositories) {
+      lines.push(`- ${skippedRepository.repository} - ${skippedRepository.reason}`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 export function selectDistributionRepositories(
@@ -311,6 +429,15 @@ function printSummary({ selectedRepositories, skippedRepositories, results, dryR
   }
 }
 
+async function writeRunSummary(markdown) {
+  if (!process.env.GITHUB_STEP_SUMMARY) {
+    return;
+  }
+
+  await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, markdown, "utf8");
+  console.log("Wrote distribution summary to the GitHub Actions job summary.");
+}
+
 async function main() {
   const properties = validateProperties(await readJsonc(propertiesPath), {
     requireOrganization: true,
@@ -327,7 +454,7 @@ async function main() {
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
 
   const mode = process.env.REPOSITORY_SELECTION_MODE;
-  const deliveryMode = process.env.DELIVERY_MODE;
+  const deliveryMode = normalizeDeliveryMode(process.env.DELIVERY_MODE);
   const dryRun = parseBoolean(process.env.DRY_RUN);
   assert(mode === "whitelist" || mode === "blacklist", 'REPOSITORY_SELECTION_MODE must be either "whitelist" or "blacklist".');
   assert(deliveryMode === "direct_commit" || deliveryMode === "open_pr", 'DELIVERY_MODE must be either "direct_commit" or "open_pr".');
@@ -351,9 +478,20 @@ async function main() {
   );
   const content = generateCallerWorkflow({ sourceRepository, sourceRef });
   const results = [];
+  let processingError = null;
 
   for (const repository of repositories) {
-    results.push(await writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }));
+    try {
+      results.push(await writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }));
+    } catch (error) {
+      processingError ??= error;
+      results.push({
+        repository: repository.full_name,
+        status: "failed",
+        branch: deliveryMode === "open_pr" ? updateBranchName : "",
+        error: error.message,
+      });
+    }
   }
 
   printSummary({
@@ -362,6 +500,21 @@ async function main() {
     results,
     dryRun,
   });
+
+  await writeRunSummary(renderDistributionSummaryMarkdown({
+    generatedDate: new Date().toISOString(),
+    actor: process.env.GITHUB_ACTOR ?? "",
+    dryRun,
+    repositorySelectionMode: mode,
+    deliveryMode,
+    selectedRepositories: repositories,
+    skippedRepositories,
+    results,
+  }));
+
+  if (processingError) {
+    throw new Error("One or more repositories failed during Label Workflow distribution. See the workflow summary for details.");
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

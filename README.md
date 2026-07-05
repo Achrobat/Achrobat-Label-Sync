@@ -61,9 +61,9 @@ This repository includes nine GitHub Actions workflows:
 
 - `Config-Label-Sync`
 - `Config-Reset`
-- `Distribute-Label-Test-Workflows`
+- `04 - Distribute-Label-Workflow`
 - `Inventory-Labels`
-- `Label Test`
+- `97 - Label Test`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
 - `Org-Label-Sync`
@@ -135,9 +135,9 @@ Inputs:
 
 Inventory skips archived repositories, but keeps non-archived read-only repositories because inventory does not write to them. If the run fails after inventorying some repositories, the workflow still writes the accumulated inventory summary before failing.
 
-### Label Test
+### 97 - Label Test
 
-`Label Test` is a reusable workflow that target repositories can call from a small caller workflow. It is intended to be added as a required branch protection check on pull requests.
+`97 - Label Test` is a reusable workflow that target repositories can call from a small caller workflow. It is intended to be added as a required branch protection check on pull requests.
 
 The rules live only in `config/label-test-workflow-config.jsonc` in this repository:
 
@@ -174,19 +174,19 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
-### Distribute-Label-Test-Workflows
+### 04 - Distribute-Label-Workflow
 
-Run `Distribute-Label-Test-Workflows` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+Run `04 - Distribute-Label-Workflow` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 
-- `repository_selection_mode`: choose `whitelist` or `blacklist` from `config/label-test-workflow-config.jsonc`
-- `delivery_mode`: choose `direct_commit` or `open_pr`
 - `dry_run`: preview without writing
+- `repository_selection_mode`: choose `whitelist` or `blacklist` from `config/label-test-workflow-config.jsonc`
+- `delivery_mode`: choose `Direct Commit` or `Pull Request`
 
-`open_pr` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
+`Pull Request` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
 
-After the caller workflow is merged into a target repository, make the `Label Test` check required in that repository's branch protection rules.
+After the caller workflow is merged into a target repository, make the `97 - Label Test` check required in that repository's branch protection rules.
 
 ### Config-Reset
 
