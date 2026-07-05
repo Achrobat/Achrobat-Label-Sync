@@ -242,8 +242,8 @@ export function validateGithubDefaultLabels(githubDefaultLabels) {
   });
 }
 
-function validateRepositoryEntries(entries, configKey) {
-  assert(Array.isArray(entries), `config/repository-filter.jsonc field "${configKey}" must contain an array.`);
+export function validateRepositoryEntries(entries, configKey, { configPath = "config/repository-filter.jsonc" } = {}) {
+  assert(Array.isArray(entries), `${configPath} field "${configKey}" must contain an array.`);
 
   const seen = new Set();
 
@@ -251,10 +251,7 @@ function validateRepositoryEntries(entries, configKey) {
     assert(typeof entry === "string" && entry.trim(), `"${configKey}" entry at index ${index} must be a non-empty string.`);
 
     const name = entry.trim();
-    assert(
-      isRepositoryName(name) || isFullRepositoryName(name),
-      `"${configKey}" entry "${name}" must be either "repo-name" or "owner/repo-name".`,
-    );
+    assert(isRepositoryName(name) || isFullRepositoryName(name), `"${configKey}" entry "${name}" must be either "repo-name" or "owner/repo-name".`);
 
     const key = normalizeRepositoryRef(name);
     assert(!seen.has(key), `Duplicate "${configKey}" entry detected: "${name}".`);
@@ -277,5 +274,113 @@ export function validateRepositoryFilter(repositoryFilter) {
     useWhitelist: repositoryFilter.useWhitelist ?? false,
     whitelist: validateRepositoryEntries(repositoryFilter.whitelist ?? [], "whitelist"),
     blacklist: validateRepositoryEntries(repositoryFilter.blacklist ?? [], "blacklist"),
+  };
+}
+
+function validateLabelNameEntries(entries, configKey) {
+  assert(Array.isArray(entries), `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`);
+
+  const seen = new Set();
+
+  return entries.map((entry, index) => {
+    assert(typeof entry === "string" && entry.trim(), `"${configKey}" entry at index ${index} must be a non-empty string.`);
+
+    const labelName = entry.trim();
+    const key = normalizeName(labelName);
+    assert(!seen.has(key), `Duplicate ${configKey} entry detected: "${labelName}".`);
+    seen.add(key);
+    return labelName;
+  });
+}
+
+function validateProtectedLabelApprover(value) {
+  assert(typeof value === "string" && value.trim(), "protectedLabelApprovals approver must be a non-empty string.");
+
+  const approver = value.trim();
+
+  if (approver.startsWith("teams/")) {
+    const slug = approver.slice("teams/".length).trim();
+    assert(slug, `protectedLabelApprovals approver "${approver}" must include a team slug after "teams/".`);
+    assert(!slug.includes("/"), `protectedLabelApprovals approver "${approver}" must include only one "teams/" prefix.`);
+    assert(/^[A-Za-z0-9_.-]+$/.test(slug), `protectedLabelApprovals team slug "${slug}" contains invalid characters.`);
+    return {
+      type: "team",
+      slug,
+      value: approver,
+    };
+  }
+
+  assert(!approver.includes("/"), `protectedLabelApprovals user approver "${approver}" must not contain "/". Use "teams/<slug>" for teams.`);
+  assert(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(approver), `protectedLabelApprovals user approver "${approver}" is not a valid GitHub username.`);
+
+  return {
+    type: "user",
+    login: approver,
+    value: approver,
+  };
+}
+
+function validateProtectedLabelApprovals(entries) {
+  assert(
+    Array.isArray(entries),
+    'config/label-test-workflow-config.jsonc field "protectedLabelApprovals" must contain an array.',
+  );
+
+  const seen = new Set();
+
+  return entries.map((entry, index) => {
+    assert(
+      entry && typeof entry === "object" && !Array.isArray(entry),
+      `protectedLabelApprovals entry at index ${index} must be an object.`,
+    );
+    assert(
+      typeof entry.label === "string" && entry.label.trim(),
+      `protectedLabelApprovals entry at index ${index} must include a non-empty label.`,
+    );
+
+    const label = entry.label.trim();
+    const approver = validateProtectedLabelApprover(entry.approver);
+    const key = `${normalizeName(label)}\0${normalizeName(approver.value)}`;
+    assert(
+      !seen.has(key),
+      `Duplicate protectedLabelApprovals entry detected: "${label}" with approver "${approver.value}".`,
+    );
+    seen.add(key);
+
+    return {
+      label,
+      approver,
+    };
+  });
+}
+
+export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
+  assert(
+    labelTestWorkflowConfig && typeof labelTestWorkflowConfig === "object" && !Array.isArray(labelTestWorkflowConfig),
+    "config/label-test-workflow-config.jsonc must contain an object.",
+  );
+
+  const workflowDistribution = labelTestWorkflowConfig.workflowDistribution ?? {};
+  assert(
+    workflowDistribution && typeof workflowDistribution === "object" && !Array.isArray(workflowDistribution),
+    'config/label-test-workflow-config.jsonc field "workflowDistribution" must contain an object.',
+  );
+
+  return {
+    requiredLabels: validateLabelNameEntries(labelTestWorkflowConfig.requiredLabels ?? [], "requiredLabels"),
+    failingLabels: validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels"),
+    protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
+    workflowDistribution: {
+      whitelist: validateRepositoryEntries(
+        workflowDistribution.whitelist ?? [],
+        "workflowDistribution.whitelist",
+        { configPath: "config/label-test-workflow-config.jsonc" },
+      ),
+      blacklist: validateRepositoryEntries(
+        workflowDistribution.blacklist ?? [],
+        "workflowDistribution.blacklist",
+        { configPath: "config/label-test-workflow-config.jsonc" },
+      ),
+    },
   };
 }

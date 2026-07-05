@@ -1,0 +1,372 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { assert, readJsonc } from "./lib/config-utils.mjs";
+import {
+  validateLabelTestWorkflowConfig,
+  validateProperties,
+} from "./lib/config-validation.mjs";
+import {
+  filterEligibleRepositories,
+  isSourceRepository,
+  parseTokenPermissions,
+  repositoryMatchesEntries,
+} from "./lib/repository-selection.mjs";
+
+const workspaceRoot = process.cwd();
+const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
+const labelTestWorkflowConfigPath = path.join(workspaceRoot, "config", "label-test-workflow-config.jsonc");
+const callerWorkflowPath = ".github/workflows/label-test.yml";
+const updateBranchName = "label-sync/update-label-test-workflow";
+
+const validateOnly = process.argv.includes("--validate-only");
+
+function parseBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return false;
+  }
+
+  return value.toLowerCase() === "true";
+}
+
+async function githubRequest(token, method, apiPath, body, { allowNotFound = false } = {}) {
+  const response = await fetch(`https://api.github.com${apiPath}`, {
+    method,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "label-sync-workflow-distributor",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (allowNotFound && response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`${method} ${apiPath} failed with ${response.status}: ${message}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return response.json();
+}
+
+async function getOrganizationRepositories(token, orgName) {
+  const repositories = [];
+  let page = 1;
+
+  while (true) {
+    const batch = await githubRequest(
+      token,
+      "GET",
+      `/orgs/${orgName}/repos?type=all&per_page=100&page=${page}`,
+    );
+    repositories.push(...batch);
+
+    if (batch.length < 100) {
+      return repositories;
+    }
+
+    page += 1;
+  }
+}
+
+function encodeBase64(value) {
+  return Buffer.from(value, "utf8").toString("base64");
+}
+
+function decodeBase64(value) {
+  return Buffer.from(value, "base64").toString("utf8");
+}
+
+export function generateCallerWorkflow({ sourceRepository, sourceRef }) {
+  return `name: Label Test
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+      - review_requested
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  label-test:
+    uses: ${sourceRepository}/.github/workflows/label-test.yml@${sourceRef}
+    with:
+      label_sync_repository: ${sourceRepository}
+      label_sync_ref: ${sourceRef}
+      target_repository: \${{ github.repository }}
+      pull_request_number: \${{ github.event.pull_request.number }}
+    secrets: inherit
+`;
+}
+
+export function selectDistributionRepositories(
+  repositories,
+  {
+    orgName,
+    sourceRepository,
+    mode,
+    workflowDistribution,
+  },
+) {
+  assert(mode === "whitelist" || mode === "blacklist", 'Repository selection mode must be either "whitelist" or "blacklist".');
+
+  return repositories
+    .filter((repository) => {
+      if (isSourceRepository(repository, sourceRepository, orgName)) {
+        return false;
+      }
+
+      if (mode === "whitelist") {
+        return repositoryMatchesEntries(repository, workflowDistribution.whitelist, orgName);
+      }
+
+      return !repositoryMatchesEntries(repository, workflowDistribution.blacklist, orgName);
+    })
+    .sort((left, right) => left.full_name.localeCompare(right.full_name));
+}
+
+async function getDefaultBranch(token, repositoryFullName) {
+  const repository = await githubRequest(token, "GET", `/repos/${repositoryFullName}`);
+  return repository.default_branch;
+}
+
+async function getFileContent(token, repositoryFullName, filePath, ref = null) {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  return githubRequest(
+    token,
+    "GET",
+    `/repos/${repositoryFullName}/contents/${encodeURIComponent(filePath).replace(/%2F/g, "/")}${query}`,
+    null,
+    { allowNotFound: true },
+  );
+}
+
+async function putFileContent(token, repositoryFullName, filePath, { branch, content, message, sha = null }) {
+  const body = {
+    branch,
+    message,
+    content: encodeBase64(content),
+  };
+
+  if (sha) {
+    body.sha = sha;
+  }
+
+  return githubRequest(
+    token,
+    "PUT",
+    `/repos/${repositoryFullName}/contents/${encodeURIComponent(filePath).replace(/%2F/g, "/")}`,
+    body,
+  );
+}
+
+async function getBranchRef(token, repositoryFullName, branchName) {
+  return githubRequest(
+    token,
+    "GET",
+    `/repos/${repositoryFullName}/git/ref/heads/${encodeURIComponent(branchName).replace(/%2F/g, "/")}`,
+    null,
+    { allowNotFound: true },
+  );
+}
+
+async function createBranchRef(token, repositoryFullName, branchName, sha) {
+  return githubRequest(
+    token,
+    "POST",
+    `/repos/${repositoryFullName}/git/refs`,
+    {
+      ref: `refs/heads/${branchName}`,
+      sha,
+    },
+  );
+}
+
+async function getOpenUpdatePullRequest(token, repositoryFullName, headOwner, branchName) {
+  const pulls = await githubRequest(
+    token,
+    "GET",
+    `/repos/${repositoryFullName}/pulls?state=open&head=${encodeURIComponent(`${headOwner}:${branchName}`)}&per_page=100`,
+  );
+
+  return pulls[0] ?? null;
+}
+
+async function createUpdatePullRequest(token, repositoryFullName, { branchName, baseBranch }) {
+  return githubRequest(
+    token,
+    "POST",
+    `/repos/${repositoryFullName}/pulls`,
+    {
+      title: "Update Label Test workflow",
+      head: branchName,
+      base: baseBranch,
+      body: "Updates the generated caller workflow for the central Label Test workflow.",
+    },
+  );
+}
+
+async function ensureUpdateBranch(token, repository, defaultBranch) {
+  const existing = await getBranchRef(token, repository.full_name, updateBranchName);
+
+  if (existing) {
+    return existing.object.sha;
+  }
+
+  const defaultRef = await getBranchRef(token, repository.full_name, defaultBranch);
+  assert(defaultRef, `Default branch "${defaultBranch}" was not found in ${repository.full_name}.`);
+  await createBranchRef(token, repository.full_name, updateBranchName, defaultRef.object.sha);
+  return defaultRef.object.sha;
+}
+
+async function writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }) {
+  const defaultBranch = await getDefaultBranch(token, repository.full_name);
+  const targetBranch = deliveryMode === "open_pr" ? updateBranchName : defaultBranch;
+
+  if (deliveryMode === "open_pr") {
+    await ensureUpdateBranch(token, repository, defaultBranch);
+  }
+
+  const existing = await getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch);
+  const existingContent = existing?.content ? decodeBase64(existing.content.replace(/\s/g, "")) : null;
+
+  if (existingContent === content) {
+    return {
+      repository: repository.full_name,
+      status: "unchanged",
+      branch: targetBranch,
+    };
+  }
+
+  if (dryRun) {
+    return {
+      repository: repository.full_name,
+      status: existing ? "would_update" : "would_create",
+      branch: targetBranch,
+    };
+  }
+
+  await putFileContent(token, repository.full_name, callerWorkflowPath, {
+    branch: targetBranch,
+    content,
+    message: "Update Label Test workflow",
+    sha: existing?.sha ?? null,
+  });
+
+  const result = {
+    repository: repository.full_name,
+    status: existing ? "updated" : "created",
+    branch: targetBranch,
+  };
+
+  if (deliveryMode === "open_pr") {
+    const existingPullRequest = await getOpenUpdatePullRequest(
+      token,
+      repository.full_name,
+      repository.owner?.login ?? repository.full_name.split("/")[0],
+      updateBranchName,
+    );
+    result.pullRequest = existingPullRequest ?? await createUpdatePullRequest(token, repository.full_name, {
+      branchName: updateBranchName,
+      baseBranch: defaultBranch,
+    });
+  }
+
+  return result;
+}
+
+function printSummary({ selectedRepositories, skippedRepositories, results, dryRun }) {
+  console.log(`Dry run: ${dryRun ? "true" : "false"}`);
+  console.log(`Repositories selected: ${selectedRepositories.length}`);
+  console.log(`Repositories skipped: ${skippedRepositories.length}`);
+
+  for (const skippedRepository of skippedRepositories) {
+    console.log(`- skipped ${skippedRepository.repository}: ${skippedRepository.reason}`);
+  }
+
+  for (const result of results) {
+    const pullRequestSuffix = result.pullRequest ? ` (${result.pullRequest.html_url})` : "";
+    console.log(`- ${result.repository}: ${result.status} on ${result.branch}${pullRequestSuffix}`);
+  }
+}
+
+async function main() {
+  const properties = validateProperties(await readJsonc(propertiesPath), {
+    requireOrganization: true,
+    requireLabelSyncTokenSecretName: true,
+  });
+  const config = validateLabelTestWorkflowConfig(await readJsonc(labelTestWorkflowConfigPath));
+
+  if (validateOnly) {
+    console.log("Label Test workflow configuration is valid.");
+    return;
+  }
+
+  const token = process.env.LABEL_SYNC_TOKEN;
+  assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+
+  const mode = process.env.REPOSITORY_SELECTION_MODE;
+  const deliveryMode = process.env.DELIVERY_MODE;
+  const dryRun = parseBoolean(process.env.DRY_RUN);
+  assert(mode === "whitelist" || mode === "blacklist", 'REPOSITORY_SELECTION_MODE must be either "whitelist" or "blacklist".');
+  assert(deliveryMode === "direct_commit" || deliveryMode === "open_pr", 'DELIVERY_MODE must be either "direct_commit" or "open_pr".');
+
+  const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
+  const sourceRepository = process.env.LABEL_TEST_SOURCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY;
+  const sourceRef = process.env.LABEL_TEST_SOURCE_REF ?? process.env.GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH ?? "main";
+  assert(sourceRepository, "LABEL_TEST_SOURCE_REPOSITORY or GITHUB_REPOSITORY is required.");
+
+  const discoveredRepositories = await getOrganizationRepositories(token, orgName);
+  const selectedRepositories = selectDistributionRepositories(discoveredRepositories, {
+    orgName,
+    sourceRepository,
+    mode,
+    workflowDistribution: config.workflowDistribution,
+  });
+  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
+  const { repositories, skippedRepositories } = filterEligibleRepositories(
+    selectedRepositories,
+    { orgName, requireWriteAccess: !dryRun, tokenPermissions, tokenWritePermission: "contents" },
+  );
+  const content = generateCallerWorkflow({ sourceRepository, sourceRef });
+  const results = [];
+
+  for (const repository of repositories) {
+    results.push(await writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }));
+  }
+
+  printSummary({
+    selectedRepositories: repositories,
+    skippedRepositories,
+    results,
+    dryRun,
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

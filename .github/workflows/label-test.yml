@@ -1,35 +1,40 @@
-name: 02 - Inventory-Labels
+name: Label Test
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      exclude_configured_labels:
-        description: "Exclude labels present in config."
-        required: false
-        type: boolean
-        default: false
-      list_similarities:
-        description: "List label similarities across selected repositories."
-        required: false
-        type: boolean
-        default: false
-      repositories:
-        description: "[OPTIONAL] Config Override: Run workflow on this set of repositories exclusively. Format: name, name2"
-        required: false
+      label_sync_repository:
+        description: "Repository that contains the central Label Test workflow config and scripts."
+        required: true
         type: string
+      label_sync_ref:
+        description: "Ref to check out from the central Label Sync repository."
+        required: true
+        type: string
+      target_repository:
+        description: "Repository containing the pull request being checked."
+        required: true
+        type: string
+      pull_request_number:
+        description: "Pull request number to evaluate."
+        required: true
+        type: number
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 jobs:
-  inventory-labels:
+  label-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out latest default branch
+      - name: Check out Label Sync repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          repository: ${{ inputs.label_sync_repository }}
+          ref: ${{ inputs.label_sync_ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,7 +44,7 @@ jobs:
       - name: Load properties
         id: properties
         env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ inputs.label_sync_repository }}
         run: node scripts/export-properties.mjs
 
       - name: Resolve PAT auth token
@@ -48,6 +53,7 @@ jobs:
         env:
           AUTH_MODE: pat
           PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/create-github-auth-token.mjs
 
       - name: Resolve GitHub App auth token
@@ -60,14 +66,9 @@ jobs:
           GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
         run: node scripts/create-github-auth-token.mjs
 
-      - name: Validate config
+      - name: Check PR labels and approvals
         env:
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs --validate-only
-
-      - name: Inventory labels
-        env:
-          EXCLUDE_CONFIGURED_LABELS: ${{ inputs.exclude_configured_labels }}
-          LIST_SIMILARITIES: ${{ inputs.list_similarities }}
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-pr-label-policy.mjs

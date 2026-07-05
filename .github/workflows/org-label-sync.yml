@@ -1,4 +1,4 @@
-name: Org-Label-Sync
+name: 00 - Org-Label-Sync
 
 on:
   workflow_dispatch:

@@ -1,28 +1,34 @@
-name: 02 - Inventory-Labels
+name: 03 - Distribute-Label-Test-Workflows
 
 on:
   workflow_dispatch:
     inputs:
-      exclude_configured_labels:
-        description: "Exclude labels present in config."
+      repository_selection_mode:
+        description: "Choose which repository list from config/label-test-workflow-config.jsonc to use."
+        required: true
+        type: choice
+        options:
+          - whitelist
+          - blacklist
+      delivery_mode:
+        description: "Choose whether to commit directly or open/update a PR in each selected repository."
+        required: true
+        type: choice
+        options:
+          - direct_commit
+          - open_pr
+      dry_run:
+        description: "[TEST MODE] Preview selected repositories and workflow changes without writing."
         required: false
         type: boolean
         default: false
-      list_similarities:
-        description: "List label similarities across selected repositories."
-        required: false
-        type: boolean
-        default: false
-      repositories:
-        description: "[OPTIONAL] Config Override: Run workflow on this set of repositories exclusively. Format: name, name2"
-        required: false
-        type: string
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
-  inventory-labels:
+  distribute-label-test-workflows:
     runs-on: ubuntu-latest
 
     steps:
@@ -60,14 +66,15 @@ jobs:
           GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
         run: node scripts/create-github-auth-token.mjs
 
-      - name: Validate config
-        env:
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs --validate-only
+      - name: Validate Label Test workflow config
+        run: node scripts/distribute-label-test-workflows.mjs --validate-only
 
-      - name: Inventory labels
+      - name: Distribute caller workflows
         env:
-          EXCLUDE_CONFIGURED_LABELS: ${{ inputs.exclude_configured_labels }}
-          LIST_SIMILARITIES: ${{ inputs.list_similarities }}
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs
+          ORG_NAME: ${{ steps.properties.outputs.organization }}
+          REPOSITORY_SELECTION_MODE: ${{ inputs.repository_selection_mode }}
+          DELIVERY_MODE: ${{ inputs.delivery_mode }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          LABEL_TEST_SOURCE_REPOSITORY: ${{ github.repository }}
+          LABEL_TEST_SOURCE_REF: ${{ github.event.repository.default_branch }}
+        run: node scripts/distribute-label-test-workflows.mjs
