@@ -183,6 +183,9 @@ Inputs:
 - `dry_run`: preview without writing
 - `repository_selection_mode`: choose `whitelist` or `blacklist` from `config/label-test-workflow-config.jsonc`
 - `delivery_mode`: choose `Direct Commit` or `Pull Request`
+- `repositories`: optional comma-separated repository override, such as `repo-one, org/repo-two`
+
+When `repositories` is provided, it takes priority over `repository_selection_mode` and runs only on the listed non-source repositories.
 
 `Pull Request` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
 

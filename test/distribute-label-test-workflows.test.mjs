@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   generateCallerWorkflow,
   normalizeDeliveryMode,
+  parseTargetRepositories,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
 } from "../scripts/distribute-label-test-workflows.mjs";
@@ -48,6 +49,48 @@ test("selectDistributionRepositories applies blacklist mode", () => {
     "example/gamma",
   ]);
 });
+
+test("selectDistributionRepositories lets target repository override take priority over mode", () => {
+  const selected = selectDistributionRepositories(repositories, {
+    orgName: "example",
+    sourceRepository: "example/label-sync",
+    mode: "blacklist",
+    targetRepositories: new Set(["beta"]),
+    workflowDistribution: {
+      whitelist: new Set([]),
+      blacklist: new Set(["beta", "gamma"]),
+    },
+  });
+
+  assert.deepEqual(selected.map((repository) => repository.full_name), [
+    "example/beta",
+  ]);
+});
+
+test("parseTargetRepositories parses comma-separated repository override names", () => {
+  assert.deepEqual(
+    parseTargetRepositories("alpha, example/Beta, , gamma "),
+    new Set(["alpha", "example/beta", "gamma"]),
+  );
+  assert.equal(parseTargetRepositories(""), null);
+});
+
+test("selectDistributionRepositories rejects unknown target repository overrides", () => {
+  assert.throws(
+    () => selectDistributionRepositories(repositories, {
+      orgName: "example",
+      sourceRepository: "example/label-sync",
+      mode: "whitelist",
+      targetRepositories: new Set(["missing-repo"]),
+      workflowDistribution: {
+        whitelist: new Set([]),
+        blacklist: new Set([]),
+      },
+    }),
+    /Requested repositories were not found in the discovered org repository set: missing-repo\./,
+  );
+});
+
 
 test("generateCallerWorkflow calls the distributing repository reusable workflow", () => {
   const workflow = generateCallerWorkflow({
@@ -102,4 +145,23 @@ test("renderDistributionSummaryMarkdown describes dry-run workflow changes", () 
   assert.doesNotMatch(markdown, /Would Create|Would Update|04 -/);
   assert.match(markdown, /\| \[example\/alpha\]\(https:\/\/github.com\/example\/alpha\) \| Created \| label-sync\/update-label-test-workflow \|  \|/);
   assert.match(markdown, /\[example\/archived\]\(https:\/\/github.com\/example\/archived\) - archived/);
+});
+
+test("renderDistributionSummaryMarkdown labels repository override mode as custom", () => {
+  const markdown = renderDistributionSummaryMarkdown({
+    generatedDate: "2026-07-06",
+    actor: "UltraProdigy",
+    dryRun: false,
+    repositorySelectionMode: "custom",
+    deliveryMode: "direct_commit",
+    selectedRepositories: [
+      { full_name: "example/alpha" },
+    ],
+    skippedRepositories: [],
+    results: [
+      { repository: "example/alpha", status: "updated", branch: "main" },
+    ],
+  });
+
+  assert.match(markdown, /- \*\*Repository Selection Mode:\*\* Custom\n/);
 });
