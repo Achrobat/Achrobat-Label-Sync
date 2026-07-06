@@ -31,6 +31,10 @@ function formatWorkflowRunLink(metadata) {
   return `[${metadata.workflowName} #${metadata.runNumber ?? metadata.runId}](${metadata.serverUrl}/${metadata.repository}/actions/runs/${metadata.runId})`;
 }
 
+function formatVisibleWorkflowName(workflowName) {
+  return workflowName.replace(/^\s*\d+\s*-\s*/, "");
+}
+
 function renderList(items, renderItem) {
   if (items.length === 0) {
     return "";
@@ -139,7 +143,7 @@ function formatAffectedSuffix({ affectedIssues, affectedPullRequests, matchedIss
 
 export function getWorkflowMetadata(workflowName) {
   return {
-    workflowName,
+    workflowName: formatVisibleWorkflowName(workflowName),
     repository: process.env.GITHUB_REPOSITORY ?? "",
     runId: process.env.GITHUB_RUN_ID ?? "",
     runNumber: process.env.GITHUB_RUN_NUMBER ?? "",
@@ -156,6 +160,7 @@ export async function writeChangelog({
   skippedRepositories = [],
   failure = null,
 }) {
+  const visibleWorkflowName = formatVisibleWorkflowName(workflowName);
   const changedSections = sections.filter((section) => section.hasChanges);
 
   if (changedSections.length === 0 && skippedRepositories.length === 0 && !failure) {
@@ -164,7 +169,7 @@ export async function writeChangelog({
   }
 
   const now = new Date();
-  const metadata = getWorkflowMetadata(workflowName);
+  const metadata = getWorkflowMetadata(visibleWorkflowName);
   const timestamp = formatUtcTimestamp(now);
   const generatedDate = formatDatePath(now);
   const workflowRun = formatWorkflowRunLink(metadata);
@@ -175,14 +180,14 @@ export async function writeChangelog({
     ?.filter((line) => line !== null && !isWorkflowRunSummaryLine(line));
 
   const lines = visibleSummaryLines ? [
-    `# ${workflowName} Changelog`,
+    `# ${visibleWorkflowName} Changelog`,
     "",
     ...visibleSummaryLines.map(renderSummaryLine),
     "",
     "## Changed Repositories",
     "",
   ] : [
-    `# ${workflowName} Changelog`,
+    `# ${visibleWorkflowName} Changelog`,
     "",
     `- Generated: ${timestamp}`,
     metadata.actor ? `- Actor: ${metadata.actor}` : null,

@@ -127,6 +127,41 @@ test("writeChangelog omits workflow run details from default summary lines", asy
   }
 });
 
+test("writeChangelog strips workflow ordering numbers from visible changelog titles", async () => {
+  const originalCwd = process.cwd();
+  const originalSummaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-changelog-"));
+  const summaryPath = path.join(workspace, "step-summary.md");
+
+  try {
+    process.chdir(workspace);
+    process.env.GITHUB_STEP_SUMMARY = summaryPath;
+
+    await writeChangelog({
+      workflowName: "04 - Distribute-Label-Workflow",
+      summaryLines: () => [
+        "Generated On: 2026-07-05",
+      ],
+      sections: [
+        {
+          repository: "example/repo",
+          hasChanges: true,
+          lines: ["Updated workflow:", "- Updated `.github/workflows/label-test.yml`"],
+        },
+      ],
+    });
+
+    const summary = await fs.readFile(summaryPath, "utf8");
+    assert.match(summary, /^# Distribute-Label-Workflow Changelog\n\n/);
+    assert.doesNotMatch(summary, /04 - Distribute-Label-Workflow Changelog/);
+  } finally {
+    process.chdir(originalCwd);
+    process.env.GITHUB_STEP_SUMMARY = originalSummaryPath;
+    await fs.rm(workspace, { force: true, recursive: true });
+  }
+});
+
 test("writeChangelog includes skipped repositories and failure details when provided", async () => {
   const originalCwd = process.cwd();
   const originalSummaryPath = process.env.GITHUB_STEP_SUMMARY;

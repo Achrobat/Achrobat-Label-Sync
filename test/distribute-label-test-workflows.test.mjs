@@ -74,7 +74,7 @@ test("normalizeDeliveryMode accepts workflow choice labels", () => {
 
 test("renderDistributionSummaryMarkdown describes dry-run workflow changes", () => {
   const markdown = renderDistributionSummaryMarkdown({
-    generatedDate: "2026-07-05T12:00:00.000Z",
+    generatedDate: "2026-07-05",
     actor: "UltraProdigy",
     dryRun: true,
     repositorySelectionMode: "blacklist",
@@ -92,12 +92,14 @@ test("renderDistributionSummaryMarkdown describes dry-run workflow changes", () 
     ],
   });
 
-  assert.match(markdown, /# 04 - Distribute-Label-Workflow Fake/);
-  assert.match(markdown, /Test Mode: True/);
-  assert.match(markdown, /Repository Selection Mode: Blacklist/);
-  assert.match(markdown, /Delivery Mode: Pull Request/);
-  assert.match(markdown, /Would Create: 1/);
-  assert.match(markdown, /Unchanged: 1/);
-  assert.match(markdown, /\| example\/alpha \| Would create \| label-sync\/update-label-test-workflow \|  \|/);
-  assert.match(markdown, /example\/archived - archived/);
+  assert.match(markdown, /^# Distribute Label Workflow Fake Changelog\n\n/);
+  assert.match(markdown, /- \*\*Generated On:\*\* 2026-07-05\n/);
+  assert.match(markdown, /- \*\*Test Mode:\*\* True\n/);
+  assert.match(markdown, /- \*\*Repository Selection Mode:\*\* Blacklist\n/);
+  assert.match(markdown, /- \*\*Delivery Mode:\*\* Pull Request\n/);
+  assert.match(markdown, /- \*\*Created:\*\* 1\n/);
+  assert.match(markdown, /- \*\*Unchanged:\*\* 1\n/);
+  assert.doesNotMatch(markdown, /Would Create|Would Update|04 -/);
+  assert.match(markdown, /\| \[example\/alpha\]\(https:\/\/github.com\/example\/alpha\) \| Created \| label-sync\/update-label-test-workflow \|  \|/);
+  assert.match(markdown, /\[example\/archived\]\(https:\/\/github.com\/example\/archived\) - archived/);
 });
