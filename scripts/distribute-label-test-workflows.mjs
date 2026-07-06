@@ -8,6 +8,8 @@ import {
 } from "./lib/config-validation.mjs";
 import {
   filterEligibleRepositories,
+  formatRepositoryLink,
+  formatSkippedRepository,
   isSourceRepository,
   parseTokenPermissions,
   repositoryMatchesEntries,
@@ -152,8 +154,8 @@ function displayStatus(status) {
     created: "Created",
     updated: "Updated",
     unchanged: "Unchanged",
-    would_create: "Would create",
-    would_update: "Would update",
+    would_create: "Created",
+    would_update: "Updated",
     failed: "Failed",
   };
 
@@ -162,9 +164,30 @@ function displayStatus(status) {
 
 function countResultsByStatus(results) {
   return results.reduce((counts, result) => {
-    counts[result.status] = (counts[result.status] ?? 0) + 1;
+    const key = result.status === "would_create"
+      ? "created"
+      : result.status === "would_update"
+        ? "updated"
+        : result.status;
+    counts[key] = (counts[key] ?? 0) + 1;
     return counts;
   }, {});
+}
+
+function renderSummaryLine(line) {
+  const separatorIndex = line.indexOf(":");
+
+  if (separatorIndex === -1) {
+    return `- ${line}`;
+  }
+
+  const label = line.slice(0, separatorIndex + 1);
+  const value = line.slice(separatorIndex + 1);
+  return `- **${label}**${value}`;
+}
+
+function formatDateOnly(date = new Date()) {
+  return date.toISOString().slice(0, 10);
 }
 
 function escapeMarkdownTableCell(value) {
@@ -190,9 +213,10 @@ export function renderDistributionSummaryMarkdown({
   results,
 }) {
   const counts = countResultsByStatus(results);
-  const lines = [
-    `# ${dryRun ? "04 - Distribute-Label-Workflow Fake" : "04 - Distribute-Label-Workflow"}`,
-    "",
+  const title = dryRun
+    ? "Distribute Label Workflow Fake Changelog"
+    : "Distribute Label Workflow Changelog";
+  const summaryLines = [
     `Generated On: ${generatedDate}`,
     `Actor: ${actor || "Unavailable"}`,
     `Test Mode: ${displayBoolean(dryRun)}`,
@@ -202,10 +226,13 @@ export function renderDistributionSummaryMarkdown({
     `Repositories Skipped: ${skippedRepositories.length}`,
     `Created: ${counts.created ?? 0}`,
     `Updated: ${counts.updated ?? 0}`,
-    `Would Create: ${counts.would_create ?? 0}`,
-    `Would Update: ${counts.would_update ?? 0}`,
     `Unchanged: ${counts.unchanged ?? 0}`,
     `Failed: ${counts.failed ?? 0}`,
+  ];
+  const lines = [
+    `# ${title}`,
+    "",
+    ...summaryLines.map(renderSummaryLine),
     "",
     "## Repository Results",
     "",
@@ -222,7 +249,7 @@ export function renderDistributionSummaryMarkdown({
         ? `${displayStatus(result.status)}: ${result.error}`
         : displayStatus(result.status);
       lines.push(
-        `| ${escapeMarkdownTableCell(result.repository)} | ${escapeMarkdownTableCell(resultText)} | ${escapeMarkdownTableCell(result.branch)} | ${formatPullRequest(result)} |`,
+        `| ${formatRepositoryLink(result.repository)} | ${escapeMarkdownTableCell(resultText)} | ${escapeMarkdownTableCell(result.branch)} | ${formatPullRequest(result)} |`,
       );
     }
   }
@@ -231,7 +258,7 @@ export function renderDistributionSummaryMarkdown({
     lines.push("", "## Skipped Repositories", "");
 
     for (const skippedRepository of skippedRepositories) {
-      lines.push(`- ${skippedRepository.repository} - ${skippedRepository.reason}`);
+      lines.push(`- ${formatSkippedRepository(skippedRepository)}`);
     }
   }
 
@@ -502,7 +529,7 @@ async function main() {
   });
 
   await writeRunSummary(renderDistributionSummaryMarkdown({
-    generatedDate: new Date().toISOString(),
+    generatedDate: formatDateOnly(),
     actor: process.env.GITHUB_ACTOR ?? "",
     dryRun,
     repositorySelectionMode: mode,
