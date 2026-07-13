@@ -10,6 +10,7 @@ Features:
 - Track removed managed labels in `config/deleted-labels.jsonc`
 - Validate JSONC config files automatically on config changes and pull requests
 - Create and update labels across selected organization repositories
+- Optionally run the organization label sync automatically once per day
 - Delete labels that were removed from the managed label set
 - Optionally delete exact GitHub default labels
 - Optionally delete unmanaged labels during org sync runs
@@ -40,7 +41,7 @@ All project config lives in `config/` and uses JSONC, so comments are allowed.
 - `config/labels.jsonc`: managed labels to create or update across the organization
 - `config/deleted-labels.jsonc`: labels that should be deleted from target repositories
 - `config/github-default-labels.jsonc`: exact GitHub default label specs that can be pruned
-- `config/repository-filter.jsonc`: whitelist or blacklist rules for repository selection
+- `config/repository-filter.jsonc`: whitelist or blacklist rules for repository selection and automatic sync settings
 - `config/label-test-workflow-config.jsonc`: PR label-test rules and separate caller workflow distribution repository lists
 
 The configured source repository is always skipped by repository filtering. You do not need to add it to the whitelist or blacklist.
@@ -50,6 +51,7 @@ The configured source repository is always skipped by repository filtering. You 
 - `labels.jsonc` starts empty until labels are defined or synced from the source repository
 - `deleted-labels.jsonc` starts empty and is populated when managed labels are removed from the source repository
 - `repository-filter.jsonc` defaults to blacklist mode, which targets all discovered org repositories except listed exclusions
+- Automatic organization sync is disabled by default; when enabled, unmanaged label deletion is off and exact GitHub default label deletion is on
 - `Config-Reset` resets `repository-filter.jsonc` to empty whitelist mode, which targets no repositories until entries are added
 - GitHub default labels are pruned only when they exactly match `config/github-default-labels.jsonc`
 - Unmanaged label deletion is disabled unless `delete_missing` is enabled on `Org-Label-Sync`
@@ -59,15 +61,15 @@ The configured source repository is always skipped by repository filtering. You 
 
 This repository includes nine GitHub Actions workflows:
 
-- `Config-Label-Sync`
+- `02 - Config-Label-Sync`
 - `Config-Reset`
-- `04 - Distribute-Label-Workflow`
-- `Inventory-Labels`
+- `05 - Distribute-Label-Workflow`
+- `03 - Inventory-Labels`
 - `97 - Label Test`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
-- `Org-Label-Sync`
-- `Remove-Labels`
+- `01 - Org-Label-Sync`
+- `04 - Remove-Labels`
 
 ### Recommended sync flow
 
@@ -104,6 +106,21 @@ Inputs:
 - `label_replacements`: comma-separated rename map in `old=new, old2=new2` format
 
 `label_replacements` is meant for label renames. The new label must exist in `config/labels.jsonc`. The old label must exist in `config/deleted-labels.jsonc`, or it may exist in `config/github-default-labels.jsonc` when `delete_github_default_labels` is enabled.
+
+The workflow also checks for automatic runs every day at midnight UTC. Configure scheduled behavior in the `automaticSync` object in `config/repository-filter.jsonc`:
+
+```jsonc
+"automaticSync": {
+  "enabled": false,
+  "deleteMissing": false,
+  "deleteGithubDefaultLabels": true,
+  "labelReplacements": ""
+}
+```
+
+Set `enabled` to `true` to allow the daily run. `labelReplacements` uses the same `old=new, old2=new2` format as the manual input. The schedule itself must be changed in `.github/workflows/01-org-label-sync.yml` because GitHub evaluates workflow schedules before loading repository config.
+
+Automatic runs perform the normal full organization sync after applying the configured whitelist or blacklist. Repositories that already match remain unchanged, new repositories receive the managed labels, and label drift in existing repositories is corrected.
 
 When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing. Workflow summaries are retained according to GitHub Actions run retention settings.
 
@@ -174,9 +191,9 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
-### 04 - Distribute-Label-Workflow
+### 05 - Distribute-Label-Workflow
 
-Run `04 - Distribute-Label-Workflow` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+Run `05 - Distribute-Label-Workflow` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 
@@ -201,7 +218,7 @@ Inputs:
 - `reset_github_default_labels`: reset `config/github-default-labels.jsonc` to the standard GitHub default label specs
 - `reset_labels`: reset `config/labels.jsonc` to an empty managed-label list
 - `reset_label_test_workflow_config`: reset `config/label-test-workflow-config.jsonc` to empty label-test rules and empty workflow distribution lists
-- `reset_repository_filter`: reset `config/repository-filter.jsonc` to empty whitelist mode
+- `reset_repository_filter`: reset `config/repository-filter.jsonc` to empty whitelist mode with automatic sync disabled
 - `confirmation`: must be exactly `CONFIRM` (will fail otherwise)
 
 `reset_labels` clears the managed label source of truth. The reset commit is made by `github-actions[bot]`, so `Reverse-Config-Label-Sync` ignores it.
@@ -218,6 +235,7 @@ Validation checks include:
 - Invalid label colors
 - Invalid repository names
 - Repository filter shape
+- Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
 - Label Test user and `teams/<slug>` approver syntax
 - GitHub default label shape

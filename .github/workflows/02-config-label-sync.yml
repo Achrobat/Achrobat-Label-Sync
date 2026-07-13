@@ -1,32 +1,18 @@
-name: 02 - Inventory-Labels
+name: 02 - Config-Label-Sync
 
 on:
   workflow_dispatch:
-    inputs:
-      exclude_configured_labels:
-        description: "Exclude labels present in config."
-        required: false
-        type: boolean
-        default: false
-      list_similarities:
-        description: "List label similarities across selected repositories."
-        required: false
-        type: boolean
-        default: false
-      repositories:
-        description: "[OPTIONAL] Config Override: Run workflow on this set of repositories exclusively. Format: name, name2"
-        required: false
-        type: string
+  workflow_call:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inventory-labels:
+  sync-config:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out latest default branch
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -60,14 +46,20 @@ jobs:
           GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
         run: node scripts/create-github-auth-token.mjs
 
-      - name: Validate config
+      - name: Sync current repo labels into config
         env:
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs --validate-only
+          SOURCE_REPOSITORY: ${{ steps.properties.outputs.source_repository }}
+        run: node scripts/sync-config-labels.mjs
 
-      - name: Inventory labels
-        env:
-          EXCLUDE_CONFIGURED_LABELS: ${{ inputs.exclude_configured_labels }}
-          LIST_SIMILARITIES: ${{ inputs.list_similarities }}
-          TARGET_REPOSITORIES: ${{ inputs.repositories }}
-        run: node scripts/inventory-labels.mjs
+      - name: Commit config updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- config/labels.jsonc config/deleted-labels.jsonc; then
+            echo "No config changes detected."
+            exit 0
+          fi
+          git add config/labels.jsonc config/deleted-labels.jsonc
+          git commit -m "Sync labels config from source repository"
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

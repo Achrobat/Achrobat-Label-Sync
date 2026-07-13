@@ -1,6 +1,8 @@
-name: 00 - Org-Label-Sync
+name: 01 - Org-Label-Sync
 
 on:
+  schedule:
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -31,12 +33,37 @@ permissions:
   contents: write
 
 jobs:
+  automatic-settings:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.settings.outputs.enabled }}
+      delete_missing: ${{ steps.settings.outputs.delete_missing }}
+      delete_github_default_labels: ${{ steps.settings.outputs.delete_github_default_labels }}
+      label_replacements: ${{ steps.settings.outputs.label_replacements }}
+
+    steps:
+      - name: Check out latest default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Load automatic sync settings
+        id: settings
+        run: node scripts/export-automatic-sync-settings.mjs
+
   refresh-config:
-    uses: ./.github/workflows/config-label-sync.yml
+    needs: automatic-settings
+    if: ${{ github.event_name != 'schedule' || needs.automatic-settings.outputs.enabled == 'true' }}
+    uses: ./.github/workflows/02-config-label-sync.yml
     secrets: inherit
 
   sync-org:
-    needs: refresh-config
+    needs: [automatic-settings, refresh-config]
     runs-on: ubuntu-latest
 
     steps:
@@ -76,16 +103,16 @@ jobs:
 
       - name: Validate updated config
         env:
-          DELETE_GITHUB_DEFAULT_LABELS: ${{ inputs.delete_github_default_labels }}
-          LABEL_REPLACEMENTS: ${{ inputs.label_replacements }}
+          DELETE_GITHUB_DEFAULT_LABELS: ${{ github.event_name == 'schedule' && needs.automatic-settings.outputs.delete_github_default_labels || inputs.delete_github_default_labels }}
+          LABEL_REPLACEMENTS: ${{ github.event_name == 'schedule' && needs.automatic-settings.outputs.label_replacements || inputs.label_replacements }}
         run: node scripts/sync-labels.mjs --validate-only
 
       - name: Sync labels across the organization
         env:
           ORG_NAME: ${{ steps.properties.outputs.organization }}
           DRY_RUN: ${{ inputs.dry_run }}
-          DELETE_MISSING: ${{ inputs.delete_missing }}
-          DELETE_GITHUB_DEFAULT_LABELS: ${{ inputs.delete_github_default_labels }}
+          DELETE_MISSING: ${{ github.event_name == 'schedule' && needs.automatic-settings.outputs.delete_missing || inputs.delete_missing }}
+          DELETE_GITHUB_DEFAULT_LABELS: ${{ github.event_name == 'schedule' && needs.automatic-settings.outputs.delete_github_default_labels || inputs.delete_github_default_labels }}
           TARGET_REPOSITORIES: ${{ inputs.repositories }}
-          LABEL_REPLACEMENTS: ${{ inputs.label_replacements }}
+          LABEL_REPLACEMENTS: ${{ github.event_name == 'schedule' && needs.automatic-settings.outputs.label_replacements || inputs.label_replacements }}
         run: node scripts/sync-labels.mjs

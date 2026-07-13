@@ -63,3 +63,57 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
     await fs.rm(workspace, { force: true, recursive: true });
   }
 });
+
+test("reset-configs restores automatic sync defaults in repository-filter.jsonc", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-reset-"));
+  const configDir = path.join(workspace, "config");
+  const configPath = path.join(configDir, "repository-filter.jsonc");
+
+  try {
+    await fs.mkdir(configDir);
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        useWhitelist: false,
+        automaticSync: {
+          enabled: true,
+          deleteMissing: true,
+          deleteGithubDefaultLabels: false,
+          labelReplacements: "bug=Bug Fix",
+        },
+        whitelist: ["example-repo"],
+        blacklist: ["other-repo"],
+      }),
+      "utf8",
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [resetConfigsScript],
+      {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          RESET_REPOSITORY_FILTER: "true",
+        },
+      },
+    );
+
+    const resetConfig = await readJsonc(configPath);
+
+    assert.match(stdout, /Reset config\/repository-filter\.jsonc/);
+    assert.deepEqual(resetConfig, {
+      useWhitelist: true,
+      automaticSync: {
+        enabled: false,
+        deleteMissing: false,
+        deleteGithubDefaultLabels: true,
+        labelReplacements: "",
+      },
+      whitelist: [],
+      blacklist: [],
+    });
+  } finally {
+    await fs.rm(workspace, { force: true, recursive: true });
+  }
+});

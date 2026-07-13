@@ -136,6 +136,15 @@ const configDefaults = {
 {
   "useWhitelist": true,
 
+  "automaticSync": {
+    // Automatic Org-Label-Sync runs once daily. To change the frequency, edit the schedule in
+    // .github/workflows/01-org-label-sync.yml.
+    "enabled": false,
+    "deleteMissing": false,
+    "deleteGithubDefaultLabels": true,
+    "labelReplacements": ""
+  },
+
   // Used only when "useWhitelist" is true.
   "whitelist": [
     // "sandbox-repo",

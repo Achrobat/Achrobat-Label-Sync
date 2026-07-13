@@ -139,7 +139,7 @@ test("writeChangelog strips workflow ordering numbers from visible changelog tit
     process.env.GITHUB_STEP_SUMMARY = summaryPath;
 
     await writeChangelog({
-      workflowName: "04 - Distribute-Label-Workflow",
+      workflowName: "05 - Distribute-Label-Workflow",
       summaryLines: () => [
         "Generated On: 2026-07-05",
       ],
@@ -154,7 +154,7 @@ test("writeChangelog strips workflow ordering numbers from visible changelog tit
 
     const summary = await fs.readFile(summaryPath, "utf8");
     assert.match(summary, /^# Distribute-Label-Workflow Changelog\n\n/);
-    assert.doesNotMatch(summary, /04 - Distribute-Label-Workflow Changelog/);
+    assert.doesNotMatch(summary, /05 - Distribute-Label-Workflow Changelog/);
   } finally {
     process.chdir(originalCwd);
     process.env.GITHUB_STEP_SUMMARY = originalSummaryPath;

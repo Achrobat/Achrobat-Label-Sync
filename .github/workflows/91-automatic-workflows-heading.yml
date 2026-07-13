@@ -1,0 +1,15 @@
+name: "90 ==== Automatic Workflows: ===="
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  display-only:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Display-only placeholder
+        run: echo "This workflow must never run."

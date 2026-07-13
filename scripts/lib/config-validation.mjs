@@ -260,6 +260,37 @@ export function validateRepositoryEntries(entries, configKey, { configPath = "co
   }));
 }
 
+export function parseLabelReplacements(value) {
+  if (!value || !value.trim()) {
+    return [];
+  }
+
+  const seenOldNames = new Set();
+
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf("=");
+      assert(separatorIndex > 0 && separatorIndex < entry.length - 1, `Invalid label replacement "${entry}". Use old=new.`);
+      assert(entry.indexOf("=", separatorIndex + 1) === -1, `Invalid label replacement "${entry}". Label replacement names cannot contain "=".`);
+
+      const oldName = entry.slice(0, separatorIndex).trim();
+      const newName = entry.slice(separatorIndex + 1).trim();
+      assert(oldName, `Invalid label replacement "${entry}". Old label name is empty.`);
+      assert(newName, `Invalid label replacement "${entry}". New label name is empty.`);
+
+      const oldKey = normalizeName(oldName);
+      const newKey = normalizeName(newName);
+      assert(oldKey !== newKey, `Label replacement "${entry}" points to the same normalized label name.`);
+      assert(!seenOldNames.has(oldKey), `Duplicate label replacement source detected: "${oldName}".`);
+      seenOldNames.add(oldKey);
+
+      return { oldName, newName, oldKey, newKey };
+    });
+}
+
 export function validateRepositoryFilter(repositoryFilter) {
   assert(
     repositoryFilter && typeof repositoryFilter === "object" && !Array.isArray(repositoryFilter),
@@ -270,10 +301,51 @@ export function validateRepositoryFilter(repositoryFilter) {
     assert(typeof repositoryFilter.useWhitelist === "boolean", 'config/repository-filter.jsonc field "useWhitelist" must be a boolean.');
   }
 
+  if (repositoryFilter.automaticSync !== undefined) {
+    assert(
+      repositoryFilter.automaticSync
+        && typeof repositoryFilter.automaticSync === "object"
+        && !Array.isArray(repositoryFilter.automaticSync),
+      'config/repository-filter.jsonc field "automaticSync" must be an object.',
+    );
+  }
+
+  const automaticSync = repositoryFilter.automaticSync ?? {};
+  const automaticFields = [
+    "enabled",
+    "deleteMissing",
+    "deleteGithubDefaultLabels",
+  ];
+
+  for (const field of automaticFields) {
+    if (automaticSync[field] !== undefined) {
+      assert(
+        typeof automaticSync[field] === "boolean",
+        `config/repository-filter.jsonc field "automaticSync.${field}" must be a boolean.`,
+      );
+    }
+  }
+
+  if (automaticSync.labelReplacements !== undefined) {
+    assert(
+      typeof automaticSync.labelReplacements === "string",
+      'config/repository-filter.jsonc field "automaticSync.labelReplacements" must be a string.',
+    );
+  }
+
+  const labelReplacements = automaticSync.labelReplacements ?? "";
+  parseLabelReplacements(labelReplacements);
+
   return {
     useWhitelist: repositoryFilter.useWhitelist ?? false,
     whitelist: validateRepositoryEntries(repositoryFilter.whitelist ?? [], "whitelist"),
     blacklist: validateRepositoryEntries(repositoryFilter.blacklist ?? [], "blacklist"),
+    automaticSync: {
+      enabled: automaticSync.enabled ?? false,
+      deleteMissing: automaticSync.deleteMissing ?? false,
+      deleteGithubDefaultLabels: automaticSync.deleteGithubDefaultLabels ?? true,
+      labelReplacements,
+    },
   };
 }
 

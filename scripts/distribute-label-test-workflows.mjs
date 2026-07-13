@@ -128,7 +128,7 @@ permissions:
 
 jobs:
   label-test:
-    uses: ${sourceRepository}/.github/workflows/label-test.yml@${sourceRef}
+    uses: ${sourceRepository}/.github/workflows/97-label-test.yml@${sourceRef}
     with:
       label_sync_repository: ${sourceRepository}
       label_sync_ref: ${sourceRef}

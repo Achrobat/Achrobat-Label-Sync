@@ -101,7 +101,7 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.match(workflow, /name: 97 - Label Test/);
   assert.match(workflow, /pull_request_target:/);
   assert.match(workflow, /pull_request_review:/);
-  assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
+  assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
   assert.match(workflow, /label_sync_ref: main/);
   assert.match(workflow, /target_repository: \$\{\{ github\.repository \}\}/);

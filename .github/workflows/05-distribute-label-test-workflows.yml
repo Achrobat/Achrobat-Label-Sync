@@ -1,4 +1,4 @@
-name: 04 - Distribute-Label-Workflow
+name: 05 - Distribute-Label-Workflow
 
 on:
   workflow_dispatch:

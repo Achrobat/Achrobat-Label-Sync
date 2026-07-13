@@ -10,6 +10,7 @@ import {
 } from "./lib/config-utils.mjs";
 import {
   assertNoManagedDeletedLabelOverlap,
+  parseLabelReplacements,
   validateDeletedLabels,
   validateGithubDefaultLabels,
   validateLabels,
@@ -59,37 +60,6 @@ function parseRepositoryFilter(value) {
       .map((entry) => entry.trim().toLowerCase())
       .filter(Boolean),
   );
-}
-
-function parseLabelReplacements(value) {
-  if (!value || !value.trim()) {
-    return [];
-  }
-
-  const seenOldNames = new Set();
-
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const separatorIndex = entry.indexOf("=");
-      assert(separatorIndex > 0 && separatorIndex < entry.length - 1, `Invalid label replacement "${entry}". Use old=new.`);
-      assert(entry.indexOf("=", separatorIndex + 1) === -1, `Invalid label replacement "${entry}". Label replacement names cannot contain "=".`);
-
-      const oldName = entry.slice(0, separatorIndex).trim();
-      const newName = entry.slice(separatorIndex + 1).trim();
-      assert(oldName, `Invalid label replacement "${entry}". Old label name is empty.`);
-      assert(newName, `Invalid label replacement "${entry}". New label name is empty.`);
-
-      const oldKey = normalizeName(oldName);
-      const newKey = normalizeName(newName);
-      assert(oldKey !== newKey, `Label replacement "${entry}" points to the same normalized label name.`);
-      assert(!seenOldNames.has(oldKey), `Duplicate label replacement source detected: "${oldName}".`);
-      seenOldNames.add(oldKey);
-
-      return { oldName, newName, oldKey, newKey };
-    });
 }
 
 function formatDisplayBoolean(value) {
