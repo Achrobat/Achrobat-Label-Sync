@@ -7,12 +7,25 @@
   "requiredLabels": [
     // "Bug",
     // "Feature"
+    "Bug Fix",
+    "Enhancement",
+    "Chore",
+    "Affects Balance",
+    "New Feature",
+    "Performance",
+    "Refactor",
+    "Safe for Stable"
   ],
 
   // Any matching PR label in this list fails the check.
   "failingLabels": [
     // "Blocked",
     // "Do Not Merge"
+    "Not Ready for Testing",
+    "Ongoing Freeze - Do NOT Merge",
+    "❌ There is a Merge Conflict With Another PR",
+    "⚠️ AUTHOR MERGE ONLY",
+    "Frozen PR"
   ],
 
   // If a listed label is present on a PR, at least one listed user or team member for that label must have
@@ -20,6 +33,8 @@
   "protectedLabelApprovals": [
     // { "label": "Affects Balance", "approver": "teams/admin" },
     // { "label": "Affects Balance", "approver": "UltraProdigy" }
+    { "label": "Affects Balance", "approver": "UltraProdigy" },
+    { "label": "Requires Admin", "approver": "UltraProdigy" }
   ],
 
   // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
