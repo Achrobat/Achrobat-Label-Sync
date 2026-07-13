@@ -46,7 +46,13 @@ export function parseTargetRepositories(value) {
   );
 }
 
-async function githubRequest(token, method, apiPath, body, { allowNotFound = false } = {}) {
+async function githubRequest(
+  token,
+  method,
+  apiPath,
+  body,
+  { allowNotFound = false, allowConflict = false } = {},
+) {
   const response = await fetch(`https://api.github.com${apiPath}`, {
     method,
     headers: {
@@ -59,6 +65,10 @@ async function githubRequest(token, method, apiPath, body, { allowNotFound = fal
   });
 
   if (allowNotFound && response.status === 404) {
+    return null;
+  }
+
+  if (allowConflict && response.status === 409) {
     return null;
   }
 
@@ -176,6 +186,7 @@ function displayStatus(status) {
     would_create: "Created",
     would_update: "Updated",
     failed: "Failed",
+    not_processed: "Not Processed",
   };
 
   return labels[status] ?? status;
@@ -247,6 +258,7 @@ export function renderDistributionSummaryMarkdown({
     `Updated: ${counts.updated ?? 0}`,
     `Unchanged: ${counts.unchanged ?? 0}`,
     `Failed: ${counts.failed ?? 0}`,
+    `Not Processed: ${counts.not_processed ?? 0}`,
   ];
   const lines = [
     `# ${title}`,
@@ -264,9 +276,13 @@ export function renderDistributionSummaryMarkdown({
     lines.push("| --- | --- | --- | --- |");
 
     for (const result of results) {
-      const resultText = result.error
-        ? `${displayStatus(result.status)}: ${result.error}`
-        : displayStatus(result.status);
+      let resultText = displayStatus(result.status);
+
+      if (result.error) {
+        resultText = result.status === "failed" && result.stage
+          ? `${resultText} during ${result.stage}: ${result.error}`
+          : `${resultText}: ${result.error}`;
+      }
       lines.push(
         `| ${formatRepositoryLink(result.repository)} | ${escapeMarkdownTableCell(resultText)} | ${escapeMarkdownTableCell(result.branch)} | ${formatPullRequest(result)} |`,
       );
@@ -367,13 +383,18 @@ async function putFileContent(token, repositoryFullName, filePath, { branch, con
   );
 }
 
-async function getBranchRef(token, repositoryFullName, branchName) {
+async function getBranchRef(
+  token,
+  repositoryFullName,
+  branchName,
+  { allowEmptyRepository = false } = {},
+) {
   return githubRequest(
     token,
     "GET",
     `/repos/${repositoryFullName}/git/ref/heads/${encodeURIComponent(branchName).replace(/%2F/g, "/")}`,
     null,
-    { allowNotFound: true },
+    { allowNotFound: true, allowConflict: allowEmptyRepository },
   );
 }
 
@@ -413,39 +434,118 @@ async function createUpdatePullRequest(token, repositoryFullName, { branchName, 
   );
 }
 
-async function ensureUpdateBranch(token, repository, defaultBranch) {
-  const existing = await getBranchRef(token, repository.full_name, updateBranchName);
+const defaultDistributionApi = {
+  getDefaultBranch,
+  getFileContent,
+  putFileContent,
+  getBranchRef,
+  createBranchRef,
+  getOpenUpdatePullRequest,
+  createUpdatePullRequest,
+};
 
-  if (existing) {
-    return existing.object.sha;
+async function runDistributionStage(stage, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    const stagedError = error instanceof Error ? error : new Error(String(error));
+    stagedError.stage ??= stage;
+    throw stagedError;
   }
-
-  const defaultRef = await getBranchRef(token, repository.full_name, defaultBranch);
-  assert(defaultRef, `Default branch "${defaultBranch}" was not found in ${repository.full_name}.`);
-  await createBranchRef(token, repository.full_name, updateBranchName, defaultRef.object.sha);
-  return defaultRef.object.sha;
 }
 
-async function writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }) {
-  const defaultBranch = await getDefaultBranch(token, repository.full_name);
-  const targetBranch = deliveryMode === "open_pr" ? updateBranchName : defaultBranch;
+export async function writeCallerWorkflow(
+  token,
+  repository,
+  {
+    deliveryMode,
+    content,
+    dryRun,
+    defaultBranch = null,
+    defaultRef = null,
+    api = defaultDistributionApi,
+  },
+) {
+  const resolvedDefaultBranch = defaultBranch ?? await api.getDefaultBranch(token, repository.full_name);
+  let targetBranch = resolvedDefaultBranch;
+  let existing;
 
   if (deliveryMode === "open_pr") {
-    await ensureUpdateBranch(token, repository, defaultBranch);
+    const updateRef = await runDistributionStage(
+      "branch",
+      () => api.getBranchRef(token, repository.full_name, updateBranchName),
+    );
+
+    if (updateRef) {
+      targetBranch = updateBranchName;
+      existing = await runDistributionStage(
+        "workflow_file",
+        () => api.getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch),
+      );
+    } else {
+      const defaultFile = await runDistributionStage(
+        "workflow_file",
+        () => api.getFileContent(
+          token,
+          repository.full_name,
+          callerWorkflowPath,
+          resolvedDefaultBranch,
+        ),
+      );
+      const defaultContent = defaultFile?.content
+        ? decodeBase64(defaultFile.content.replace(/\s/g, ""))
+        : null;
+
+      if (defaultContent === content) {
+        return {
+          repository: repository.full_name,
+          status: "unchanged",
+          branch: resolvedDefaultBranch,
+        };
+      }
+
+      targetBranch = updateBranchName;
+
+      if (dryRun) {
+        return {
+          repository: repository.full_name,
+          status: defaultFile ? "would_update" : "would_create",
+          branch: targetBranch,
+        };
+      }
+
+      const resolvedDefaultRef = defaultRef
+        ?? await runDistributionStage(
+          "branch",
+          () => api.getBranchRef(token, repository.full_name, resolvedDefaultBranch),
+        );
+      assert(
+        resolvedDefaultRef,
+        `Default branch "${resolvedDefaultBranch}" was not found in ${repository.full_name}.`,
+      );
+      await runDistributionStage(
+        "branch",
+        () => api.createBranchRef(
+          token,
+          repository.full_name,
+          updateBranchName,
+          resolvedDefaultRef.object.sha,
+        ),
+      );
+      existing = defaultFile;
+    }
+  } else {
+    existing = await runDistributionStage(
+      "workflow_file",
+      () => api.getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch),
+    );
   }
 
-  const existing = await getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch);
   const existingContent = existing?.content ? decodeBase64(existing.content.replace(/\s/g, "")) : null;
 
-  if (existingContent === content) {
-    return {
-      repository: repository.full_name,
-      status: "unchanged",
-      branch: targetBranch,
-    };
-  }
+  const contentChanged = existingContent !== content;
 
-  if (dryRun) {
+  if (dryRun && contentChanged) {
     return {
       repository: repository.full_name,
       status: existing ? "would_update" : "would_create",
@@ -453,33 +553,154 @@ async function writeCallerWorkflow(token, repository, { deliveryMode, content, d
     };
   }
 
-  await putFileContent(token, repository.full_name, callerWorkflowPath, {
-    branch: targetBranch,
-    content,
-    message: "Update Label Test workflow",
-    sha: existing?.sha ?? null,
-  });
+  if (contentChanged) {
+    await runDistributionStage(
+      "workflow_file",
+      () => api.putFileContent(token, repository.full_name, callerWorkflowPath, {
+        branch: targetBranch,
+        content,
+        message: "Update Label Test workflow",
+        sha: existing?.sha ?? null,
+      }),
+    );
+  }
 
   const result = {
     repository: repository.full_name,
-    status: existing ? "updated" : "created",
+    status: contentChanged ? (existing ? "updated" : "created") : "unchanged",
     branch: targetBranch,
   };
 
-  if (deliveryMode === "open_pr") {
-    const existingPullRequest = await getOpenUpdatePullRequest(
-      token,
-      repository.full_name,
-      repository.owner?.login ?? repository.full_name.split("/")[0],
-      updateBranchName,
+  if (deliveryMode === "open_pr" && !dryRun) {
+    const existingPullRequest = await runDistributionStage(
+      "pull_request",
+      () => api.getOpenUpdatePullRequest(
+        token,
+        repository.full_name,
+        repository.owner?.login ?? repository.full_name.split("/")[0],
+        updateBranchName,
+      ),
     );
-    result.pullRequest = existingPullRequest ?? await createUpdatePullRequest(token, repository.full_name, {
-      branchName: updateBranchName,
-      baseBranch: defaultBranch,
-    });
+
+    if (existingPullRequest) {
+      result.pullRequest = existingPullRequest;
+    } else {
+      const defaultFile = await runDistributionStage(
+        "workflow_file",
+        () => api.getFileContent(
+          token,
+          repository.full_name,
+          callerWorkflowPath,
+          resolvedDefaultBranch,
+        ),
+      );
+      const defaultContent = defaultFile?.content
+        ? decodeBase64(defaultFile.content.replace(/\s/g, ""))
+        : null;
+
+      if (defaultContent !== content) {
+        result.pullRequest = await runDistributionStage(
+          "pull_request",
+          () => api.createUpdatePullRequest(token, repository.full_name, {
+            branchName: updateBranchName,
+            baseBranch: resolvedDefaultBranch,
+          }),
+        );
+      }
+    }
   }
 
   return result;
+}
+
+export async function preflightDistributionRepository(
+  token,
+  repository,
+  { api = defaultDistributionApi } = {},
+) {
+  const defaultBranch = await runDistributionStage(
+    "preflight",
+    () => api.getDefaultBranch(token, repository.full_name),
+  );
+  const defaultRef = await runDistributionStage(
+    "preflight",
+    () => api.getBranchRef(
+      token,
+      repository.full_name,
+      defaultBranch,
+      { allowEmptyRepository: true },
+    ),
+  );
+
+  if (!defaultRef) {
+    return { skipReason: "empty" };
+  }
+
+  return { defaultBranch, defaultRef };
+}
+
+export async function processDistributionRepositories(
+  repositories,
+  {
+    token,
+    deliveryMode,
+    content,
+    dryRun,
+    api = defaultDistributionApi,
+    preflight = preflightDistributionRepository,
+    write = writeCallerWorkflow,
+  },
+) {
+  const results = [];
+  const skippedRepositories = [];
+  let processingError = null;
+
+  for (let index = 0; index < repositories.length; index += 1) {
+    const repository = repositories[index];
+
+    try {
+      const repositoryState = await preflight(token, repository, { api });
+
+      if (repositoryState.skipReason) {
+        skippedRepositories.push({
+          repository: repository.full_name,
+          reason: repositoryState.skipReason,
+        });
+        continue;
+      }
+
+      results.push(await write(token, repository, {
+        deliveryMode,
+        content,
+        dryRun,
+        defaultBranch: repositoryState.defaultBranch,
+        defaultRef: repositoryState.defaultRef,
+        api,
+      }));
+    } catch (error) {
+      processingError ??= error;
+      results.push({
+        repository: repository.full_name,
+        status: "failed",
+        stage: error.stage ?? "unknown",
+        branch: deliveryMode === "open_pr" ? updateBranchName : "",
+        error: error.message,
+      });
+
+      for (const remainingRepository of repositories.slice(index + 1)) {
+        results.push({
+          repository: remainingRepository.full_name,
+          status: "not_processed",
+          branch: deliveryMode === "open_pr" ? updateBranchName : "",
+          error: `Stopped after failure in ${repository.full_name}.`,
+        });
+      }
+
+      break;
+    }
+  }
+
+  return { results, skippedRepositories, processingError };
 }
 
 function printSummary({ selectedRepositories, skippedRepositories, results, dryRun }) {
@@ -542,30 +763,33 @@ async function main() {
     workflowDistribution: config.workflowDistribution,
   });
   const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
-  const { repositories, skippedRepositories } = filterEligibleRepositories(
+  const requiredTokenPermissions = deliveryMode === "open_pr"
+    ? ["contents", "workflows", "pull_requests"]
+    : ["contents", "workflows"];
+  const { repositories, skippedRepositories: eligibilitySkips } = filterEligibleRepositories(
     selectedRepositories,
-    { orgName, requireWriteAccess: !dryRun, tokenPermissions, tokenWritePermission: "contents" },
+    {
+      orgName,
+      requireWriteAccess: !dryRun,
+      tokenPermissions,
+      tokenWritePermission: requiredTokenPermissions,
+    },
   );
   const content = generateCallerWorkflow({ sourceRepository, sourceRef });
-  const results = [];
-  let processingError = null;
-
-  for (const repository of repositories) {
-    try {
-      results.push(await writeCallerWorkflow(token, repository, { deliveryMode, content, dryRun }));
-    } catch (error) {
-      processingError ??= error;
-      results.push({
-        repository: repository.full_name,
-        status: "failed",
-        branch: deliveryMode === "open_pr" ? updateBranchName : "",
-        error: error.message,
-      });
-    }
-  }
+  const {
+    results,
+    skippedRepositories: processingSkips,
+    processingError,
+  } = await processDistributionRepositories(repositories, {
+    token,
+    deliveryMode,
+    content,
+    dryRun,
+  });
+  const skippedRepositories = [...eligibilitySkips, ...processingSkips];
 
   printSummary({
-    selectedRepositories: repositories,
+    selectedRepositories,
     skippedRepositories,
     results,
     dryRun,
@@ -577,7 +801,7 @@ async function main() {
     dryRun,
     repositorySelectionMode: targetRepositories ? "custom" : mode,
     deliveryMode,
-    selectedRepositories: repositories,
+    selectedRepositories,
     skippedRepositories,
     results,
   }));

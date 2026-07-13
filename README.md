@@ -206,6 +206,8 @@ When `repositories` is provided, it takes priority over `repository_selection_mo
 
 `Pull Request` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
 
+The distributor skips archived repositories, empty repositories with no default-branch commit, and repositories whose available token permissions cannot perform the selected delivery mode. It then completes the branch, workflow commit, and pull request for one repository before starting the next. The first unexpected operational failure stops the run; rerunning it reuses any branch, commit, or pull request already created and continues without requiring branch cleanup.
+
 After the caller workflow is merged into a target repository, make the `97 - Label Test` check required in that repository's branch protection rules.
 
 ### Config-Reset

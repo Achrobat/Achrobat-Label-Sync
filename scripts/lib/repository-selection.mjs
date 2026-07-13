@@ -65,11 +65,17 @@ export function hasTokenWriteAccess(tokenPermissions, tokenWritePermission = "la
     return null;
   }
 
-  if (tokenWritePermission === "contents") {
-    return tokenPermissions.contents === "write";
+  if (Array.isArray(tokenWritePermission)) {
+    return tokenWritePermission.every((permission) => (
+      hasTokenWriteAccess(tokenPermissions, permission)
+    ));
   }
 
-  return tokenPermissions.issues === "write" || tokenPermissions.pull_requests === "write";
+  if (tokenWritePermission === "labels") {
+    return tokenPermissions.issues === "write" || tokenPermissions.pull_requests === "write";
+  }
+
+  return tokenPermissions[tokenWritePermission] === "write";
 }
 
 export function hasTokenLabelWriteAccess(tokenPermissions) {
