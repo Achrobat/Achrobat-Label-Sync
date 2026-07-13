@@ -13,23 +13,93 @@
 // ]
 [
   {
+    "name": ":construction: Testing on Zeta",
+    "color": "d93f0b",
+    "description": "Do not merge yet, testing this PR on Zeta (experimental build)"
+  },
+  {
+    "name": ":heavy_check_mark: Tested in full GTNH instance",
+    "color": "0e8a16",
+    "description": "This Pull Request has been tested in a full GTNH install."
+  },
+  {
+    "name": ":heavy_check_mark: Tested on Server",
+    "color": "0e8a16",
+    "description": "This Pull Request has been tested in a Server/Client setup."
+  },
+  {
+    "name": "⚠️ AUTHOR MERGE ONLY",
+    "color": "7a0e20",
+    "description": "Do NOT merge this PR unless you are the author."
+  },
+  {
+    "name": "❌ There is a Merge Conflict With Another PR",
+    "color": "71116b",
+    "description": "There is a merge conflict with another PR, so it can not be tested in Dev at this time."
+  },
+  {
+    "name": "Affects Balance",
+    "color": "603ad8",
+    "description": "Change affecting balance. Requires admin approval before merging."
+  },
+  {
+    "name": "AI",
+    "color": "1ca75e",
+    "description": "This PR was made with heavy AI assistance and needs more thorough review."
+  },
+  {
     "name": "Bug Fix",
-    "color": "e89abb",
-    "description": "Description Adding and whatnot"
+    "color": "7ff74f",
+    "description": "Fixes a bug. Please link it in the PR if an issue exists for it."
+  },
+  {
+    "name": "Chore",
+    "color": "ffffff",
+    "description": "Buildscript update, dep update, adaptation to trivial breaking changes, etc."
   },
   {
     "name": "Enhancement",
-    "color": "f6270b",
-    "description": "Adds an enhancement"
+    "color": "84b6eb",
+    "description": "Improve an existing mechanic. Please explain the change with a before/after comparison."
   },
   {
-    "name": "Newsworthy",
-    "color": "9d3b74",
-    "description": ""
+    "name": "Frozen PR",
+    "color": "63b4dd",
+    "description": "PRs that are frozen until further notice, the time for the NH team to decide what to do with it."
   },
   {
-    "name": "Six Seven Eight?",
-    "color": "d1948e",
-    "description": "Addme"
+    "name": "New Feature",
+    "color": "56964a",
+    "description": "Add something new. Please explain in detail how it works."
+  },
+  {
+    "name": "Not Ready for Testing",
+    "color": "a83303",
+    "description": "PR should not be tested in Zeta (experimental) yet."
+  },
+  {
+    "name": "Ongoing Freeze - Do NOT Merge",
+    "color": "e99695",
+    "description": "PR tagged with this do not meet the requirement to be merged during a freeze."
+  },
+  {
+    "name": "Performance",
+    "color": "d049f8",
+    "description": "Changes with the goal of improving performance."
+  },
+  {
+    "name": "Refactor",
+    "color": "aaffaa",
+    "description": "For PRs rewriting a part of the code to have a nicer code overall."
+  },
+  {
+    "name": "Requires Admin",
+    "color": "ffff00",
+    "description": "For PRs that require Admin approval before merging"
+  },
+  {
+    "name": "Safe for Stable",
+    "color": "d4c5f9",
+    "description": "Bugfix with low break chance for patch releases"
   }
 ]
