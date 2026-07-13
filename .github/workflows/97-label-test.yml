@@ -31,15 +31,15 @@ jobs:
 
     steps:
       - name: Check out Label Sync repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.label_sync_repository }}
           ref: ${{ inputs.label_sync_ref }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Load properties
         id: properties

@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Check out triggering commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 2
@@ -51,9 +51,9 @@ jobs:
 
       - name: Set up Node.js
         if: ${{ steps.trigger.outputs.has_labels_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Load properties
         if: ${{ steps.trigger.outputs.has_labels_change == 'true' && steps.trigger.outputs.is_bot_commit != 'true' }}
