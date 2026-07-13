@@ -1,4 +1,4 @@
-name: "00 - === Label Workflows: ==="
+name: "00 ==== Label Workflows: ===="
 
 on:
   workflow_call:
