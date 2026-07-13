@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { assert, readJsonc } from "./lib/config-utils.mjs";
+import { assert, normalizeRepositoryRef, readJsonc } from "./lib/config-utils.mjs";
 import {
   validateLabelTestWorkflowConfig,
   validateProperties,
@@ -12,6 +12,7 @@ import {
   formatSkippedRepository,
   isSourceRepository,
   parseTokenPermissions,
+  repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
 
@@ -29,6 +30,20 @@ function parseBoolean(value) {
   }
 
   return value.toLowerCase() === "true";
+}
+
+export function parseTargetRepositories(value) {
+  if (!value || !value.trim()) {
+    return null;
+  }
+
+  return new Set(
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => normalizeRepositoryRef(entry)),
+  );
 }
 
 async function githubRequest(token, method, apiPath, body, { allowNotFound = false } = {}) {
@@ -142,6 +157,10 @@ function displayBoolean(value) {
 }
 
 function displayRepositorySelectionMode(value) {
+  if (value === "custom") {
+    return "Custom";
+  }
+
   return value === "whitelist" ? "Whitelist" : "Blacklist";
 }
 
@@ -271,10 +290,32 @@ export function selectDistributionRepositories(
     orgName,
     sourceRepository,
     mode,
+    targetRepositories = null,
     workflowDistribution,
   },
 ) {
   assert(mode === "whitelist" || mode === "blacklist", 'Repository selection mode must be either "whitelist" or "blacklist".');
+
+  if (targetRepositories) {
+    const selected = repositories
+      .filter((repository) => (
+        !isSourceRepository(repository, sourceRepository, orgName)
+        && repositoryMatchesEntries(repository, targetRepositories, orgName)
+      ))
+      .sort((left, right) => left.full_name.localeCompare(right.full_name));
+
+    const available = new Set(
+      repositories.flatMap((repository) => [...repositoryAliases(repository, orgName)]),
+    );
+    const missing = [...targetRepositories].filter((entry) => !available.has(entry));
+
+    assert(
+      missing.length === 0,
+      `Requested repositories were not found in the discovered org repository set: ${missing.join(", ")}.`,
+    );
+
+    return selected;
+  }
 
   return repositories
     .filter((repository) => {
@@ -483,6 +524,7 @@ async function main() {
   const mode = process.env.REPOSITORY_SELECTION_MODE;
   const deliveryMode = normalizeDeliveryMode(process.env.DELIVERY_MODE);
   const dryRun = parseBoolean(process.env.DRY_RUN);
+  const targetRepositories = parseTargetRepositories(process.env.TARGET_REPOSITORIES);
   assert(mode === "whitelist" || mode === "blacklist", 'REPOSITORY_SELECTION_MODE must be either "whitelist" or "blacklist".');
   assert(deliveryMode === "direct_commit" || deliveryMode === "open_pr", 'DELIVERY_MODE must be either "direct_commit" or "open_pr".');
 
@@ -496,6 +538,7 @@ async function main() {
     orgName,
     sourceRepository,
     mode,
+    targetRepositories,
     workflowDistribution: config.workflowDistribution,
   });
   const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
@@ -532,7 +575,7 @@ async function main() {
     generatedDate: formatDateOnly(),
     actor: process.env.GITHUB_ACTOR ?? "",
     dryRun,
-    repositorySelectionMode: mode,
+    repositorySelectionMode: targetRepositories ? "custom" : mode,
     deliveryMode,
     selectedRepositories: repositories,
     skippedRepositories,

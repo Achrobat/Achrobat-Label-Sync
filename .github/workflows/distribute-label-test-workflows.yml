@@ -22,6 +22,10 @@ on:
         options:
           - Direct Commit
           - Pull Request
+      repositories:
+        description: "[OPTIONAL] Config Override: Run workflow on this set of repositories exclusively. Format: name, name2"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -75,6 +79,7 @@ jobs:
           REPOSITORY_SELECTION_MODE: ${{ inputs.repository_selection_mode }}
           DELIVERY_MODE: ${{ inputs.delivery_mode }}
           DRY_RUN: ${{ inputs.dry_run }}
+          TARGET_REPOSITORIES: ${{ inputs.repositories }}
           LABEL_TEST_SOURCE_REPOSITORY: ${{ github.repository }}
           LABEL_TEST_SOURCE_REF: ${{ github.event.repository.default_branch }}
         run: node scripts/distribute-label-test-workflows.mjs
