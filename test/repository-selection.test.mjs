@@ -5,6 +5,7 @@ import {
   filterEligibleRepositories,
   filterRepositoriesForWriteMode,
   formatSkippedRepository,
+  hasTokenWriteAccess,
   parseTokenPermissions,
 } from "../scripts/lib/repository-selection.mjs";
 
@@ -166,6 +167,57 @@ test("filterEligibleRepositories can use contents write token permissions for wo
 
   assert.deepEqual(eligible.map((repository) => repository.full_name), ["example/app-token-contents-write"]);
   assert.deepEqual(skippedRepositories, []);
+});
+
+test("hasTokenWriteAccess requires every workflow distribution permission", () => {
+  const requiredPermissions = ["contents", "workflows", "pull_requests"];
+
+  assert.equal(
+    hasTokenWriteAccess(
+      { contents: "write", workflows: "write", pull_requests: "write" },
+      requiredPermissions,
+    ),
+    true,
+  );
+  assert.equal(
+    hasTokenWriteAccess(
+      { contents: "write", workflows: "read", pull_requests: "write" },
+      requiredPermissions,
+    ),
+    false,
+  );
+  assert.equal(
+    hasTokenWriteAccess(
+      { contents: "write", workflows: "write" },
+      requiredPermissions,
+    ),
+    false,
+  );
+});
+
+test("filterEligibleRepositories skips GitHub App installations missing workflow distribution permissions", () => {
+  const repositories = [
+    {
+      full_name: "example/incomplete-app-permissions",
+      name: "incomplete-app-permissions",
+      archived: false,
+      permissions: { pull: true, push: true },
+    },
+  ];
+
+  const { repositories: eligible, skippedRepositories } = filterEligibleRepositories(
+    repositories,
+    {
+      requireWriteAccess: true,
+      tokenPermissions: { contents: "write", workflows: "write", pull_requests: "read" },
+      tokenWritePermission: ["contents", "workflows", "pull_requests"],
+    },
+  );
+
+  assert.deepEqual(eligible, []);
+  assert.deepEqual(skippedRepositories, [
+    { repository: "example/incomplete-app-permissions", reason: "read-only" },
+  ]);
 });
 
 test("parseTokenPermissions returns token permissions from a JSON object string", () => {
