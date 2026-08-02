@@ -125,14 +125,22 @@ on:
       - unlabeled
       - review_requested
       - ready_for_review
+  workflow_run:
+    workflows:
+      - 96 - Label Test Review Signal
+    types:
+      - completed
 
 permissions:
   contents: read
-  issues: read
-  pull-requests: read
 
 jobs:
   label-test:
+    if: \${{ github.event_name == 'pull_request_target' }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     uses: ${sourceRepository}/.github/workflows/97-label-test.yml@${sourceRef}
     with:
       label_sync_repository: ${sourceRepository}
@@ -140,6 +148,19 @@ jobs:
       target_repository: \${{ github.repository }}
       pull_request_number: \${{ github.event.pull_request.number }}
     secrets: inherit
+
+  refresh-label-test:
+    name: Refresh Label Test
+    if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      actions: write
+      contents: read
+    uses: ${sourceRepository}/.github/workflows/96-refresh-label-test.yml@${sourceRef}
+    with:
+      label_sync_repository: ${sourceRepository}
+      label_sync_ref: ${sourceRef}
+      target_repository: \${{ github.repository }}
+      review_signal_run_id: \${{ github.event.workflow_run.id }}
 `;
 }
 
@@ -179,36 +200,6 @@ jobs:
 `;
 }
 
-function generateReviewRefreshWorkflow({ sourceRepository, sourceRef }) {
-  return `name: 95 - Refresh Label Test After Review
-
-on:
-  workflow_run:
-    workflows:
-      - 96 - Label Test Review Signal
-    types:
-      - completed
-
-permissions:
-  actions: write
-  contents: read
-
-jobs:
-  refresh-label-test:
-    name: Refresh Label Test
-    if: \${{ github.event.workflow_run.conclusion == 'success' }}
-    permissions:
-      actions: write
-      contents: read
-    uses: ${sourceRepository}/.github/workflows/96-refresh-label-test.yml@${sourceRef}
-    with:
-      label_sync_repository: ${sourceRepository}
-      label_sync_ref: ${sourceRef}
-      target_repository: \${{ github.repository }}
-      review_signal_run_id: \${{ github.event.workflow_run.id }}
-`;
-}
-
 export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
   return [
     {
@@ -218,10 +209,6 @@ export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
     {
       path: ".github/workflows/label-test-review-signal.yml",
       content: generateReviewSignalWorkflow(),
-    },
-    {
-      path: ".github/workflows/label-test-review-refresh.yml",
-      content: generateReviewRefreshWorkflow({ sourceRepository, sourceRef }),
     },
   ];
 }
@@ -461,6 +448,19 @@ async function putFileContent(token, repositoryFullName, filePath, { branch, con
   );
 }
 
+async function deleteFileContent(token, repositoryFullName, filePath, { branch, message, sha }) {
+  return githubRequest(
+    token,
+    "DELETE",
+    `/repos/${repositoryFullName}/contents/${encodeURIComponent(filePath).replace(/%2F/g, "/")}`,
+    {
+      branch,
+      message,
+      sha,
+    },
+  );
+}
+
 async function getBranchRef(
   token,
   repositoryFullName,
@@ -507,7 +507,7 @@ async function createUpdatePullRequest(token, repositoryFullName, { branchName, 
       title: "Update Label Test workflows",
       head: branchName,
       base: baseBranch,
-      body: "Updates the generated policy, review signal, and review refresh workflows for the central Label Test workflow.",
+      body: "Updates the generated policy and review signal workflows for the central Label Test workflow.",
     },
   );
 }
@@ -516,6 +516,7 @@ const defaultDistributionApi = {
   getDefaultBranch,
   getFileContent,
   putFileContent,
+  deleteFileContent,
   getBranchRef,
   createBranchRef,
   getOpenUpdatePullRequest,
@@ -693,13 +694,166 @@ export async function writeCallerWorkflow(
   return result;
 }
 
+export async function removeCallerWorkflow(
+  token,
+  repository,
+  {
+    deliveryMode,
+    filePath,
+    commitMessage = "Remove obsolete Label Test workflow",
+    dryRun,
+    defaultBranch = null,
+    defaultRef = null,
+    api = defaultDistributionApi,
+  },
+) {
+  const resolvedDefaultBranch = defaultBranch ?? await api.getDefaultBranch(token, repository.full_name);
+  let targetBranch = resolvedDefaultBranch;
+  let existing;
+  let deletionAlreadyOnUpdateBranch = false;
+
+  if (deliveryMode === "open_pr") {
+    const updateRef = await runDistributionStage(
+      "branch",
+      () => api.getBranchRef(token, repository.full_name, updateBranchName),
+    );
+
+    if (updateRef) {
+      targetBranch = updateBranchName;
+      existing = await runDistributionStage(
+        "workflow_file",
+        () => api.getFileContent(token, repository.full_name, filePath, targetBranch),
+      );
+
+      if (!existing) {
+        const defaultFile = await runDistributionStage(
+          "workflow_file",
+          () => api.getFileContent(token, repository.full_name, filePath, resolvedDefaultBranch),
+        );
+
+        if (!defaultFile) {
+          return {
+            repository: repository.full_name,
+            status: "unchanged",
+            branch: targetBranch,
+          };
+        }
+
+        deletionAlreadyOnUpdateBranch = true;
+      }
+    } else {
+      existing = await runDistributionStage(
+        "workflow_file",
+        () => api.getFileContent(token, repository.full_name, filePath, resolvedDefaultBranch),
+      );
+
+      if (!existing) {
+        return {
+          repository: repository.full_name,
+          status: "unchanged",
+          branch: resolvedDefaultBranch,
+        };
+      }
+
+      targetBranch = updateBranchName;
+
+      if (dryRun) {
+        return {
+          repository: repository.full_name,
+          status: "would_update",
+          branch: targetBranch,
+        };
+      }
+
+      const resolvedDefaultRef = defaultRef
+        ?? await runDistributionStage(
+          "branch",
+          () => api.getBranchRef(token, repository.full_name, resolvedDefaultBranch),
+        );
+      assert(
+        resolvedDefaultRef,
+        `Default branch "${resolvedDefaultBranch}" was not found in ${repository.full_name}.`,
+      );
+      await runDistributionStage(
+        "branch",
+        () => api.createBranchRef(
+          token,
+          repository.full_name,
+          updateBranchName,
+          resolvedDefaultRef.object.sha,
+        ),
+      );
+    }
+  } else {
+    existing = await runDistributionStage(
+      "workflow_file",
+      () => api.getFileContent(token, repository.full_name, filePath, targetBranch),
+    );
+
+    if (!existing) {
+      return {
+        repository: repository.full_name,
+        status: "unchanged",
+        branch: targetBranch,
+      };
+    }
+  }
+
+  if (dryRun) {
+    return {
+      repository: repository.full_name,
+      status: existing ? "would_update" : "unchanged",
+      branch: targetBranch,
+    };
+  }
+
+  if (existing) {
+    await runDistributionStage(
+      "workflow_file",
+      () => api.deleteFileContent(token, repository.full_name, filePath, {
+        branch: targetBranch,
+        message: commitMessage,
+        sha: existing.sha,
+      }),
+    );
+  }
+
+  const result = {
+    repository: repository.full_name,
+    status: existing ? "updated" : "unchanged",
+    branch: targetBranch,
+  };
+
+  if (deliveryMode === "open_pr") {
+    const existingPullRequest = await runDistributionStage(
+      "pull_request",
+      () => api.getOpenUpdatePullRequest(
+        token,
+        repository.full_name,
+        repository.owner?.login ?? repository.full_name.split("/")[0],
+        updateBranchName,
+      ),
+    );
+
+    if (existingPullRequest) {
+      result.pullRequest = existingPullRequest;
+    } else if (existing || deletionAlreadyOnUpdateBranch) {
+      result.pullRequest = await runDistributionStage(
+        "pull_request",
+        () => api.createUpdatePullRequest(token, repository.full_name, {
+          branchName: updateBranchName,
+          baseBranch: resolvedDefaultBranch,
+        }),
+      );
+    }
+  }
+
+  return result;
+}
+
 function workflowCommitMessage(filePath) {
   if (filePath.endsWith("label-test-review-signal.yml")) {
     return "Update Label Test review signal workflow";
-  }
-
-  if (filePath.endsWith("label-test-review-refresh.yml")) {
-    return "Update Label Test review refresh workflow";
   }
 
   return "Update Label Test workflow";
@@ -724,6 +878,7 @@ export async function writeCallerWorkflows(
   {
     workflows,
     write = writeCallerWorkflow,
+    remove = removeCallerWorkflow,
     ...options
   },
 ) {
@@ -737,6 +892,12 @@ export async function writeCallerWorkflows(
       commitMessage: workflowCommitMessage(workflow.path),
     }));
   }
+
+  results.push(await remove(token, repository, {
+    ...options,
+    filePath: ".github/workflows/label-test-review-refresh.yml",
+    commitMessage: "Remove obsolete Label Test review refresh workflow",
+  }));
 
   const pullRequest = results.find((result) => result.pullRequest)?.pullRequest;
   const branch = results.find((result) => result.branch === updateBranchName)?.branch

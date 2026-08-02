@@ -192,17 +192,16 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
-The policy check runs on `pull_request_target`. Review submissions, edits, and dismissals do not create a second policy check. Instead, a read-only review-signal workflow triggers a default-branch refresher, which reruns the latest completed policy check for that pull request. This lets a new approval replace the earlier failed result while keeping fork pull requests isolated from write credentials.
+The policy check runs on `pull_request_target`. Review submissions, edits, and dismissals do not create a second policy check. Instead, a read-only review-signal workflow triggers the default-branch refresh job in `label-test.yml`, which reruns the latest completed policy check for that pull request. This lets a new approval replace the earlier failed result while keeping fork pull requests isolated from write credentials.
 
 ### 05 - Distribute-Label-Workflow
 
 Run `05 - Distribute-Label-Workflow` manually to install or update the Label Test workflows in selected repositories. It writes these files in each selected target repository:
 
-- `.github/workflows/label-test.yml`: the only policy check, triggered by pull request changes
+- `.github/workflows/label-test.yml`: the policy check plus the trusted refresh job
 - `.github/workflows/label-test-review-signal.yml`: a read-only review event signal
-- `.github/workflows/label-test-review-refresh.yml`: a default-branch helper that reruns the policy check
 
-The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+The refresh implementation remains in the central Label-Sync repository as the reusable `96 - Refresh Label Test` workflow; it is not a third workflow distributed to target repositories. Distribution also removes the obsolete `.github/workflows/label-test-review-refresh.yml` file if a target received the earlier three-file layout. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 
