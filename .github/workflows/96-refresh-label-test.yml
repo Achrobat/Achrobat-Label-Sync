@@ -1,0 +1,56 @@
+name: 96 - Refresh Label Test
+
+on:
+  workflow_call:
+    inputs:
+      label_sync_repository:
+        description: "Repository containing the trusted Label Test refresh script."
+        required: true
+        type: string
+      label_sync_ref:
+        description: "Ref to check out from the central Label Sync repository."
+        required: true
+        type: string
+      target_repository:
+        description: "Repository containing the pull request and Label Test workflow run."
+        required: true
+        type: string
+      review_signal_run_id:
+        description: "Workflow run containing the validated pull request number artifact."
+        required: true
+        type: number
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  refresh-label-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download review context
+        uses: actions/download-artifact@v8
+        with:
+          name: label-test-review-context
+          path: ${{ runner.temp }}/label-test-review-context
+          run-id: ${{ inputs.review_signal_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Check out Label Sync repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.label_sync_repository }}
+          ref: ${{ inputs.label_sync_ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Rerun authoritative Label Test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
+        run: node scripts/rerun-label-policy.mjs
