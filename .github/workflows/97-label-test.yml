@@ -1,4 +1,4 @@
-name: 97 - Label Test
+name: Label Test
 
 on:
   workflow_call:

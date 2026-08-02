@@ -601,7 +601,7 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
     sourceRef: "main",
   });
 
-  assert.match(workflow, /name: 97 - Label Test/);
+  assert.match(workflow, /name: Label Test/);
   assert.match(workflow, /pull_request_target:/);
   assert.doesNotMatch(workflow, /pull_request_review:/);
   assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
@@ -638,7 +638,7 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
   assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
 
   const refresh = byPath.get(".github/workflows/label-test-review-refresh.yml");
-  assert.match(refresh, /name: 96 - Label Test Review Refresh/);
+  assert.match(refresh, /name: Label Test Review Refresh/);
   assert.match(refresh, /pull_request_review:/);
   assert.match(refresh, /- submitted/);
   assert.match(refresh, /- edited/);

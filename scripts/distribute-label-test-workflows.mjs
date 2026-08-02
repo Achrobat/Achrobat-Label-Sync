@@ -113,7 +113,7 @@ function decodeBase64(value) {
 }
 
 export function generateCallerWorkflow({ sourceRepository, sourceRef }) {
-  return `name: 97 - Label Test
+  return `name: Label Test
 
 on:
   pull_request_target:
@@ -146,7 +146,7 @@ jobs:
 }
 
 export function generateReviewRefreshWorkflow({ sourceRepository, sourceRef }) {
-  return `name: 96 - Label Test Review Refresh
+  return `name: Label Test Review Refresh
 
 on:
   pull_request_review:
