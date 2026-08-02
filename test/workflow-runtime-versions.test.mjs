@@ -49,7 +49,7 @@ test("workflows use the current stable Node.js action stack", async () => {
   assert.ok(nodeVersionCount > 0, "expected at least one explicit Node.js version");
 });
 
-test("review refresh workflow downloads trusted context and reruns the authoritative label test", async () => {
+test("review refresh workflow takes the pull request number directly and reruns the authoritative label test", async () => {
   const workflow = await fs.readFile(
     path.join(workflowsDirectory, "96-refresh-label-test.yml"),
     "utf8",
@@ -57,15 +57,30 @@ test("review refresh workflow downloads trusted context and reruns the authorita
 
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /actions:\s*write/);
-  assert.match(workflow, /uses:\s*actions\/download-artifact@v8/);
-  assert.match(workflow, /name:\s*label-test-review-context/);
-  assert.match(workflow, /run-id:\s*\$\{\{ inputs\.review_signal_run_id \}\}/);
-  assert.match(workflow, /github-token:\s*\$\{\{ github\.token \}\}/);
+  assert.match(workflow, /pull_request_number:/);
   assert.match(workflow, /uses:\s*actions\/checkout@v7/);
   assert.match(workflow, /uses:\s*actions\/setup-node@v6/);
   assert.match(workflow, /node-version:\s*"24"/);
-  assert.match(workflow, /PULL_REQUEST_NUMBER_FILE:\s*\$\{\{ runner\.temp \}\}\/label-test-review-context\/pr-number\.txt/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ inputs\.pull_request_number \}\}/);
   assert.match(workflow, /TARGET_REPOSITORY:\s*\$\{\{ inputs\.target_repository \}\}/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /run:\s*node scripts\/rerun-label-policy\.mjs/);
+
+  // The artifact handshake is gone. The PR number arrives in the trusted
+  // pull_request_review event payload, so no run artifact is downloaded.
+  assert.doesNotMatch(workflow, /download-artifact/);
+  assert.doesNotMatch(workflow, /label-test-review-context/);
+  assert.doesNotMatch(workflow, /review_signal_run_id/);
+});
+
+test("the distributed policy workflow is the only required label test check", async () => {
+  const workflow = await fs.readFile(
+    path.join(workflowsDirectory, "97-label-test.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /workflow_call:/);
+  assert.match(workflow, /pull_request_number:/);
+  assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
+  assert.doesNotMatch(workflow, /actions:\s*write/);
 });

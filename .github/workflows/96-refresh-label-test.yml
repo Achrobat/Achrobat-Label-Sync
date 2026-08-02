@@ -15,8 +15,8 @@ on:
         description: "Repository containing the pull request and Label Test workflow run."
         required: true
         type: string
-      review_signal_run_id:
-        description: "Workflow run containing the validated pull request number artifact."
+      pull_request_number:
+        description: "Pull request whose authoritative Label Test run should be rerun."
         required: true
         type: number
 
@@ -29,14 +29,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download review context
-        uses: actions/download-artifact@v8
-        with:
-          name: label-test-review-context
-          path: ${{ runner.temp }}/label-test-review-context
-          run-id: ${{ inputs.review_signal_run_id }}
-          github-token: ${{ github.token }}
-
       - name: Check out Label Sync repository
         uses: actions/checkout@v7
         with:
@@ -52,5 +44,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
-          PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
+          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
         run: node scripts/rerun-label-policy.mjs

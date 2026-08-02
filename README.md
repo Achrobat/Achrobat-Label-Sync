@@ -192,16 +192,20 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
-The policy check runs on `pull_request_target`. Review submissions, edits, and dismissals do not create a second policy check. Instead, a read-only review-signal workflow triggers the default-branch refresh job in `label-test.yml`, which reruns the latest completed policy check for that pull request. This lets a new approval replace the earlier failed result while keeping fork pull requests isolated from write credentials.
+The policy check runs on `pull_request_target` only, so it publishes exactly one check. Review submissions, edits, and dismissals do not create a second policy check. Instead, a separate review-refresh workflow reruns the latest completed policy run for that pull request, letting a new approval replace an earlier failed result on the same check.
+
+`pull_request_review` always executes from the target repository's default branch, the pull request number comes from GitHub's event payload rather than contributor-controlled data, and the refresh job never checks out pull request code. It only calls the Actions rerun API, so granting it `actions: write` is safe for fork pull requests.
+
+A pull request shows one check until someone submits a review, and two afterwards. The refresh workflow reacts to every review regardless of labels, because GitHub cannot filter a workflow trigger by pull request label, and narrowing it with a job-level condition would publish a permanently skipped check instead. Reducing this to a single check in all cases would require a GitHub App posting a check run through the Checks API rather than distributed workflows.
 
 ### 05 - Distribute-Label-Workflow
 
 Run `05 - Distribute-Label-Workflow` manually to install or update the Label Test workflows in selected repositories. It writes these files in each selected target repository:
 
-- `.github/workflows/label-test.yml`: the policy check plus the trusted refresh job
-- `.github/workflows/label-test-review-signal.yml`: a read-only review event signal
+- `.github/workflows/label-test.yml`: the single required policy check, on `pull_request_target`
+- `.github/workflows/label-test-review-refresh.yml`: reruns the policy check after a review
 
-The refresh implementation remains in the central Label-Sync repository as the reusable `96 - Refresh Label Test` workflow; it is not a third workflow distributed to target repositories. Distribution also removes the obsolete `.github/workflows/label-test-review-refresh.yml` file if a target received the earlier three-file layout. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+The refresh implementation remains in the central Label-Sync repository as the reusable `96 - Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` file if a target received the earlier artifact-handshake layout. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 
@@ -216,7 +220,7 @@ When `repositories` is provided, it takes priority over `repository_selection_mo
 
 The distributor skips archived repositories, empty repositories with no default-branch commit, and repositories whose available token permissions cannot perform the selected delivery mode. It then completes the branch, workflow commit, and pull request for one repository before starting the next. The first unexpected operational failure stops the run; rerunning it reuses any branch, commit, or pull request already created and continues without requiring branch cleanup.
 
-After the workflows are merged into a target repository, make only `97 - Label Test / label-test / label-test` required in that repository's branch protection rules. Do not require `Record Label Test Review` or `Refresh Label Test`; they are operational helpers. The target repository's Actions policy must allow the refresher's requested `actions: write` permission so it can rerun the policy workflow.
+After the workflows are merged into a target repository, make only `97 - Label Test / label-test / label-test` required in that repository's branch protection rules. Do not require `Refresh Label Test`; it is an operational helper. The target repository's Actions policy must allow the refresher's requested `actions: write` permission so it can rerun the policy workflow.
 
 ### Config-Reset
 
