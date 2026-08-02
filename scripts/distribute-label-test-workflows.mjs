@@ -125,18 +125,12 @@ on:
       - unlabeled
       - review_requested
       - ready_for_review
-  workflow_run:
-    workflows:
-      - 96 - Label Test Review Signal
-    types:
-      - completed
 
 permissions:
   contents: read
 
 jobs:
   label-test:
-    if: \${{ github.event_name == 'pull_request_target' }}
     permissions:
       contents: read
       issues: read
@@ -148,24 +142,11 @@ jobs:
       target_repository: \${{ github.repository }}
       pull_request_number: \${{ github.event.pull_request.number }}
     secrets: inherit
-
-  refresh-label-test:
-    name: Refresh Label Test
-    if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
-    permissions:
-      actions: write
-      contents: read
-    uses: ${sourceRepository}/.github/workflows/96-refresh-label-test.yml@${sourceRef}
-    with:
-      label_sync_repository: ${sourceRepository}
-      label_sync_ref: ${sourceRef}
-      target_repository: \${{ github.repository }}
-      review_signal_run_id: \${{ github.event.workflow_run.id }}
 `;
 }
 
-function generateReviewSignalWorkflow() {
-  return `name: 96 - Label Test Review Signal
+export function generateReviewRefreshWorkflow({ sourceRepository, sourceRef }) {
+  return `name: 96 - Label Test Review Refresh
 
 on:
   pull_request_review:
@@ -178,25 +159,17 @@ permissions:
   contents: read
 
 jobs:
-  record-label-test-review:
-    name: Record Label Test Review
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Record pull request number
-        env:
-          PULL_REQUEST_NUMBER: \${{ github.event.pull_request.number }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/label-test-review-context"
-          printf '%s\\n' "$PULL_REQUEST_NUMBER" > "$RUNNER_TEMP/label-test-review-context/pr-number.txt"
-
-      - name: Upload review context
-        uses: actions/upload-artifact@v7
-        with:
-          name: label-test-review-context
-          path: \${{ runner.temp }}/label-test-review-context/pr-number.txt
-          if-no-files-found: error
-          retention-days: 1
+  refresh-label-test:
+    name: Refresh Label Test
+    permissions:
+      actions: write
+      contents: read
+    uses: ${sourceRepository}/.github/workflows/96-refresh-label-test.yml@${sourceRef}
+    with:
+      label_sync_repository: ${sourceRepository}
+      label_sync_ref: ${sourceRef}
+      target_repository: \${{ github.repository }}
+      pull_request_number: \${{ github.event.pull_request.number }}
 `;
 }
 
@@ -207,8 +180,8 @@ export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
       content: generateCallerWorkflow({ sourceRepository, sourceRef }),
     },
     {
-      path: ".github/workflows/label-test-review-signal.yml",
-      content: generateReviewSignalWorkflow(),
+      path: ".github/workflows/label-test-review-refresh.yml",
+      content: generateReviewRefreshWorkflow({ sourceRepository, sourceRef }),
     },
   ];
 }
@@ -852,8 +825,8 @@ export async function removeCallerWorkflow(
 }
 
 function workflowCommitMessage(filePath) {
-  if (filePath.endsWith("label-test-review-signal.yml")) {
-    return "Update Label Test review signal workflow";
+  if (filePath.endsWith("label-test-review-refresh.yml")) {
+    return "Update Label Test review refresh workflow";
   }
 
   return "Update Label Test workflow";
@@ -895,8 +868,8 @@ export async function writeCallerWorkflows(
 
   results.push(await remove(token, repository, {
     ...options,
-    filePath: ".github/workflows/label-test-review-refresh.yml",
-    commitMessage: "Remove obsolete Label Test review refresh workflow",
+    filePath: ".github/workflows/label-test-review-signal.yml",
+    commitMessage: "Remove obsolete Label Test review signal workflow",
   }));
 
   const pullRequest = results.find((result) => result.pullRequest)?.pullRequest;
