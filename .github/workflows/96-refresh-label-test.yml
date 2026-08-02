@@ -1,4 +1,4 @@
-name: 96 - Refresh Label Test
+name: Refresh Label Test
 
 on:
   workflow_call:
