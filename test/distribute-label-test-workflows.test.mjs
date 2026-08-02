@@ -3,12 +3,14 @@ import test from "node:test";
 
 import {
   generateCallerWorkflow,
+  generateCallerWorkflows,
   normalizeDeliveryMode,
   parseTargetRepositories,
   processDistributionRepositories,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
   writeCallerWorkflow,
+  writeCallerWorkflows,
 } from "../scripts/distribute-label-test-workflows.mjs";
 
 const repositories = [
@@ -167,6 +169,34 @@ test("writeCallerWorkflow dry-run mode performs no mutations", async () => {
   assert.equal(result.status, "would_update");
 });
 
+test("writeCallerWorkflow reads and writes the requested generated workflow path", async () => {
+  const { api, calls } = createFakeDistributionApi({ updateBranchExists: true });
+
+  await writeCallerWorkflow("token", {
+    full_name: "example/alpha",
+    owner: { login: "example" },
+  }, {
+    deliveryMode: "open_pr",
+    content: "name: Review signal\n",
+    filePath: ".github/workflows/label-test-review-signal.yml",
+    commitMessage: "Update Label Test review signal workflow",
+    dryRun: false,
+    defaultBranch: "main",
+    defaultRef: { object: { sha: "default-sha" } },
+    api,
+  });
+
+  const fileCalls = calls.filter((call) => (
+    call.operation === "getFileContent" || call.operation === "putFileContent"
+  ));
+  assert.ok(fileCalls.length > 0);
+  assert.ok(fileCalls.every((call) => (
+    call.filePath === ".github/workflows/label-test-review-signal.yml"
+  )));
+  const writeCall = calls.find((call) => call.operation === "putFileContent");
+  assert.equal(writeCall.options.message, "Update Label Test review signal workflow");
+});
+
 test("writeCallerWorkflow identifies the workflow-file stage on write failure", async () => {
   const { api } = createFakeDistributionApi({ updateBranchExists: true });
   api.putFileContent = async () => {
@@ -187,6 +217,112 @@ test("writeCallerWorkflow identifies the workflow-file stage on write failure", 
     }),
     (error) => error.message === "write rejected" && error.stage === "workflow_file",
   );
+});
+
+test("writeCallerWorkflows delivers every generated workflow as one repository result", async () => {
+  const calls = [];
+  const write = async (token, repository, options) => {
+    calls.push({ token, repository: repository.full_name, options });
+    const statuses = {
+      ".github/workflows/label-test.yml": "unchanged",
+      ".github/workflows/label-test-review-signal.yml": "created",
+      ".github/workflows/label-test-review-refresh.yml": "updated",
+    };
+    const result = {
+      repository: repository.full_name,
+      status: statuses[options.filePath],
+      branch: "label-sync/update-label-test-workflow",
+    };
+
+    if (options.filePath === ".github/workflows/label-test-review-refresh.yml") {
+      result.pullRequest = { number: 12, html_url: "https://github.com/example/alpha/pull/12" };
+    }
+
+    return result;
+  };
+  const workflows = [
+    { path: ".github/workflows/label-test.yml", content: "policy" },
+    { path: ".github/workflows/label-test-review-signal.yml", content: "signal" },
+    { path: ".github/workflows/label-test-review-refresh.yml", content: "refresh" },
+  ];
+
+  const result = await writeCallerWorkflows("token", {
+    full_name: "example/alpha",
+  }, {
+    workflows,
+    deliveryMode: "open_pr",
+    dryRun: false,
+    defaultBranch: "main",
+    defaultRef: { object: { sha: "default-sha" } },
+    write,
+  });
+
+  assert.deepEqual(calls.map((call) => call.options.filePath), workflows.map((workflow) => workflow.path));
+  assert.ok(calls.every((call) => call.options.deliveryMode === "open_pr"));
+  assert.equal(result.status, "updated");
+  assert.equal(result.branch, "label-sync/update-label-test-workflow");
+  assert.equal(result.pullRequest.number, 12);
+});
+
+test("writeCallerWorkflows preserves dry-run status without applying later workflows", async () => {
+  const writes = [];
+  const write = async (token, repository, options) => {
+    writes.push(options.filePath);
+    return {
+      repository: repository.full_name,
+      status: options.filePath.endsWith("label-test.yml") ? "unchanged" : "would_create",
+      branch: "label-sync/update-label-test-workflow",
+    };
+  };
+
+  const result = await writeCallerWorkflows("token", { full_name: "example/alpha" }, {
+    workflows: [
+      { path: ".github/workflows/label-test.yml", content: "policy" },
+      { path: ".github/workflows/label-test-review-signal.yml", content: "signal" },
+      { path: ".github/workflows/label-test-review-refresh.yml", content: "refresh" },
+    ],
+    deliveryMode: "open_pr",
+    dryRun: true,
+    write,
+  });
+
+  assert.equal(writes.length, 3);
+  assert.equal(result.status, "would_create");
+});
+
+test("writeCallerWorkflows stops at the first workflow-file failure", async () => {
+  const writes = [];
+  const write = async (token, repository, options) => {
+    writes.push(options.filePath);
+
+    if (options.filePath.endsWith("review-signal.yml")) {
+      throw new Error("signal write rejected");
+    }
+
+    return {
+      repository: repository.full_name,
+      status: "updated",
+      branch: "main",
+    };
+  };
+
+  await assert.rejects(
+    () => writeCallerWorkflows("token", { full_name: "example/alpha" }, {
+      workflows: [
+        { path: ".github/workflows/label-test.yml", content: "policy" },
+        { path: ".github/workflows/label-test-review-signal.yml", content: "signal" },
+        { path: ".github/workflows/label-test-review-refresh.yml", content: "refresh" },
+      ],
+      deliveryMode: "direct_commit",
+      dryRun: false,
+      write,
+    }),
+    /signal write rejected/,
+  );
+  assert.deepEqual(writes, [
+    ".github/workflows/label-test.yml",
+    ".github/workflows/label-test-review-signal.yml",
+  ]);
 });
 
 test("processDistributionRepositories skips an empty repository and continues", async () => {
@@ -225,6 +361,37 @@ test("processDistributionRepositories skips an empty repository and continues", 
   ]);
   assert.deepEqual(outcome.results.map((result) => result.repository), ["example/ready"]);
   assert.equal(outcome.processingError, null);
+});
+
+test("processDistributionRepositories forwards the generated workflow set to its writer", async () => {
+  const workflows = [
+    { path: ".github/workflows/label-test.yml", content: "policy" },
+    { path: ".github/workflows/label-test-review-signal.yml", content: "signal" },
+  ];
+  let receivedWorkflows;
+
+  await processDistributionRepositories([
+    { full_name: "example/ready" },
+  ], {
+    token: "token",
+    deliveryMode: "direct_commit",
+    workflows,
+    dryRun: false,
+    preflight: async () => ({
+      defaultBranch: "main",
+      defaultRef: { object: { sha: "default-sha" } },
+    }),
+    write: async (token, repository, options) => {
+      receivedWorkflows = options.workflows;
+      return {
+        repository: repository.full_name,
+        status: "updated",
+        branch: "main",
+      };
+    },
+  });
+
+  assert.deepEqual(receivedWorkflows, workflows);
 });
 
 test("processDistributionRepositories stops after the first unexpected failure", async () => {
@@ -368,12 +535,48 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
 
   assert.match(workflow, /name: 97 - Label Test/);
   assert.match(workflow, /pull_request_target:/);
-  assert.match(workflow, /pull_request_review:/);
+  assert.doesNotMatch(workflow, /pull_request_review:/);
   assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
   assert.match(workflow, /label_sync_ref: main/);
   assert.match(workflow, /target_repository: \$\{\{ github\.repository \}\}/);
   assert.match(workflow, /pull_request_number: \$\{\{ github\.event\.pull_request\.number \}\}/);
+});
+
+test("generateCallerWorkflows separates the required policy check from review refresh handling", () => {
+  const workflows = generateCallerWorkflows({
+    sourceRepository: "fork-owner/Label-Sync",
+    sourceRef: "main",
+  });
+  const byPath = new Map(workflows.map((workflow) => [workflow.path, workflow.content]));
+
+  assert.deepEqual([...byPath.keys()], [
+    ".github/workflows/label-test.yml",
+    ".github/workflows/label-test-review-signal.yml",
+    ".github/workflows/label-test-review-refresh.yml",
+  ]);
+
+  const policy = byPath.get(".github/workflows/label-test.yml");
+  assert.match(policy, /pull_request_target:/);
+  assert.doesNotMatch(policy, /pull_request_review:/);
+
+  const signal = byPath.get(".github/workflows/label-test-review-signal.yml");
+  assert.match(signal, /name: 96 - Label Test Review Signal/);
+  assert.match(signal, /pull_request_review:/);
+  assert.match(signal, /- submitted/);
+  assert.match(signal, /- edited/);
+  assert.match(signal, /- dismissed/);
+  assert.doesNotMatch(signal, /actions:\s*write/);
+  assert.match(signal, /PULL_REQUEST_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(signal, /uses: actions\/upload-artifact@v7/);
+  assert.match(signal, /name: label-test-review-context/);
+
+  const refresh = byPath.get(".github/workflows/label-test-review-refresh.yml");
+  assert.match(refresh, /workflow_run:/);
+  assert.match(refresh, /- 96 - Label Test Review Signal/);
+  assert.match(refresh, /actions:\s*write/);
+  assert.match(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/96-refresh-label-test\.yml@main/);
+  assert.match(refresh, /review_signal_run_id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
 });
 
 test("normalizeDeliveryMode accepts workflow choice labels", () => {

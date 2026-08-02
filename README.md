@@ -59,12 +59,13 @@ The configured source repository is always skipped by repository filtering. You 
 
 ## How to use the workflows
 
-This repository includes nine GitHub Actions workflows:
+This repository includes ten operational GitHub Actions workflows:
 
 - `02 - Config-Label-Sync`
 - `Config-Reset`
 - `05 - Distribute-Label-Workflow`
 - `03 - Inventory-Labels`
+- `96 - Refresh Label Test After Review`
 - `97 - Label Test`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
@@ -154,7 +155,7 @@ Inventory skips archived repositories, but keeps non-archived read-only reposito
 
 ### 97 - Label Test
 
-`97 - Label Test` is a reusable workflow that target repositories can call from a small caller workflow. It is intended to be added as a required branch protection check on pull requests.
+`97 - Label Test` is a reusable workflow that target repositories call from a small caller workflow. The single authoritative pull request check is `97 - Label Test / label-test / label-test`; make only that check required in branch protection.
 
 The rules live only in `config/label-test-workflow-config.jsonc` in this repository:
 
@@ -191,9 +192,17 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
+The policy check runs on `pull_request_target`. Review submissions, edits, and dismissals do not create a second policy check. Instead, a read-only review-signal workflow triggers a default-branch refresher, which reruns the latest completed policy check for that pull request. This lets a new approval replace the earlier failed result while keeping fork pull requests isolated from write credentials.
+
 ### 05 - Distribute-Label-Workflow
 
-Run `05 - Distribute-Label-Workflow` manually to install or update the caller workflow in selected repositories. It writes `.github/workflows/label-test.yml` in each selected target repository. The generated caller workflow calls back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+Run `05 - Distribute-Label-Workflow` manually to install or update the Label Test workflows in selected repositories. It writes these files in each selected target repository:
+
+- `.github/workflows/label-test.yml`: the only policy check, triggered by pull request changes
+- `.github/workflows/label-test-review-signal.yml`: a read-only review event signal
+- `.github/workflows/label-test-review-refresh.yml`: a default-branch helper that reruns the policy check
+
+The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 
@@ -208,7 +217,7 @@ When `repositories` is provided, it takes priority over `repository_selection_mo
 
 The distributor skips archived repositories, empty repositories with no default-branch commit, and repositories whose available token permissions cannot perform the selected delivery mode. It then completes the branch, workflow commit, and pull request for one repository before starting the next. The first unexpected operational failure stops the run; rerunning it reuses any branch, commit, or pull request already created and continues without requiring branch cleanup.
 
-After the caller workflow is merged into a target repository, make the `97 - Label Test` check required in that repository's branch protection rules.
+After the workflows are merged into a target repository, make only `97 - Label Test / label-test / label-test` required in that repository's branch protection rules. Do not require `Record Label Test Review` or `Refresh Label Test`; they are operational helpers. The target repository's Actions policy must allow the refresher's requested `actions: write` permission so it can rerun the policy workflow.
 
 ### Config-Reset
 

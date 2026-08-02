@@ -125,11 +125,6 @@ on:
       - unlabeled
       - review_requested
       - ready_for_review
-  pull_request_review:
-    types:
-      - submitted
-      - edited
-      - dismissed
 
 permissions:
   contents: read
@@ -146,6 +141,89 @@ jobs:
       pull_request_number: \${{ github.event.pull_request.number }}
     secrets: inherit
 `;
+}
+
+function generateReviewSignalWorkflow() {
+  return `name: 96 - Label Test Review Signal
+
+on:
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+
+permissions:
+  contents: read
+
+jobs:
+  record-label-test-review:
+    name: Record Label Test Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Record pull request number
+        env:
+          PULL_REQUEST_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/label-test-review-context"
+          printf '%s\\n' "$PULL_REQUEST_NUMBER" > "$RUNNER_TEMP/label-test-review-context/pr-number.txt"
+
+      - name: Upload review context
+        uses: actions/upload-artifact@v7
+        with:
+          name: label-test-review-context
+          path: \${{ runner.temp }}/label-test-review-context/pr-number.txt
+          if-no-files-found: error
+          retention-days: 1
+`;
+}
+
+function generateReviewRefreshWorkflow({ sourceRepository, sourceRef }) {
+  return `name: 95 - Refresh Label Test After Review
+
+on:
+  workflow_run:
+    workflows:
+      - 96 - Label Test Review Signal
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  refresh-label-test:
+    name: Refresh Label Test
+    if: \${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      actions: write
+      contents: read
+    uses: ${sourceRepository}/.github/workflows/96-refresh-label-test.yml@${sourceRef}
+    with:
+      label_sync_repository: ${sourceRepository}
+      label_sync_ref: ${sourceRef}
+      target_repository: \${{ github.repository }}
+      review_signal_run_id: \${{ github.event.workflow_run.id }}
+`;
+}
+
+export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
+  return [
+    {
+      path: ".github/workflows/label-test.yml",
+      content: generateCallerWorkflow({ sourceRepository, sourceRef }),
+    },
+    {
+      path: ".github/workflows/label-test-review-signal.yml",
+      content: generateReviewSignalWorkflow(),
+    },
+    {
+      path: ".github/workflows/label-test-review-refresh.yml",
+      content: generateReviewRefreshWorkflow({ sourceRepository, sourceRef }),
+    },
+  ];
 }
 
 export function normalizeDeliveryMode(value) {
@@ -426,10 +504,10 @@ async function createUpdatePullRequest(token, repositoryFullName, { branchName, 
     "POST",
     `/repos/${repositoryFullName}/pulls`,
     {
-      title: "Update Label Test workflow",
+      title: "Update Label Test workflows",
       head: branchName,
       base: baseBranch,
-      body: "Updates the generated caller workflow for the central Label Test workflow.",
+      body: "Updates the generated policy, review signal, and review refresh workflows for the central Label Test workflow.",
     },
   );
 }
@@ -460,6 +538,8 @@ export async function writeCallerWorkflow(
   {
     deliveryMode,
     content,
+    filePath = callerWorkflowPath,
+    commitMessage = "Update Label Test workflow",
     dryRun,
     defaultBranch = null,
     defaultRef = null,
@@ -480,7 +560,7 @@ export async function writeCallerWorkflow(
       targetBranch = updateBranchName;
       existing = await runDistributionStage(
         "workflow_file",
-        () => api.getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch),
+        () => api.getFileContent(token, repository.full_name, filePath, targetBranch),
       );
     } else {
       const defaultFile = await runDistributionStage(
@@ -488,7 +568,7 @@ export async function writeCallerWorkflow(
         () => api.getFileContent(
           token,
           repository.full_name,
-          callerWorkflowPath,
+          filePath,
           resolvedDefaultBranch,
         ),
       );
@@ -537,7 +617,7 @@ export async function writeCallerWorkflow(
   } else {
     existing = await runDistributionStage(
       "workflow_file",
-      () => api.getFileContent(token, repository.full_name, callerWorkflowPath, targetBranch),
+      () => api.getFileContent(token, repository.full_name, filePath, targetBranch),
     );
   }
 
@@ -556,10 +636,10 @@ export async function writeCallerWorkflow(
   if (contentChanged) {
     await runDistributionStage(
       "workflow_file",
-      () => api.putFileContent(token, repository.full_name, callerWorkflowPath, {
+      () => api.putFileContent(token, repository.full_name, filePath, {
         branch: targetBranch,
         content,
-        message: "Update Label Test workflow",
+        message: commitMessage,
         sha: existing?.sha ?? null,
       }),
     );
@@ -590,7 +670,7 @@ export async function writeCallerWorkflow(
         () => api.getFileContent(
           token,
           repository.full_name,
-          callerWorkflowPath,
+          filePath,
           resolvedDefaultBranch,
         ),
       );
@@ -608,6 +688,68 @@ export async function writeCallerWorkflow(
         );
       }
     }
+  }
+
+  return result;
+}
+
+function workflowCommitMessage(filePath) {
+  if (filePath.endsWith("label-test-review-signal.yml")) {
+    return "Update Label Test review signal workflow";
+  }
+
+  if (filePath.endsWith("label-test-review-refresh.yml")) {
+    return "Update Label Test review refresh workflow";
+  }
+
+  return "Update Label Test workflow";
+}
+
+function aggregateWorkflowStatus(results) {
+  const precedence = [
+    "would_update",
+    "would_create",
+    "updated",
+    "created",
+    "unchanged",
+  ];
+
+  return precedence.find((status) => results.some((result) => result.status === status))
+    ?? "unchanged";
+}
+
+export async function writeCallerWorkflows(
+  token,
+  repository,
+  {
+    workflows,
+    write = writeCallerWorkflow,
+    ...options
+  },
+) {
+  const results = [];
+
+  for (const workflow of workflows) {
+    results.push(await write(token, repository, {
+      ...options,
+      content: workflow.content,
+      filePath: workflow.path,
+      commitMessage: workflowCommitMessage(workflow.path),
+    }));
+  }
+
+  const pullRequest = results.find((result) => result.pullRequest)?.pullRequest;
+  const branch = results.find((result) => result.branch === updateBranchName)?.branch
+    ?? results.find((result) => result.branch)?.branch
+    ?? "";
+  const result = {
+    repository: repository.full_name,
+    status: aggregateWorkflowStatus(results),
+    branch,
+  };
+
+  if (pullRequest) {
+    result.pullRequest = pullRequest;
   }
 
   return result;
@@ -644,11 +786,11 @@ export async function processDistributionRepositories(
   {
     token,
     deliveryMode,
-    content,
+    workflows,
     dryRun,
     api = defaultDistributionApi,
     preflight = preflightDistributionRepository,
-    write = writeCallerWorkflow,
+    write = writeCallerWorkflows,
   },
 ) {
   const results = [];
@@ -671,7 +813,7 @@ export async function processDistributionRepositories(
 
       results.push(await write(token, repository, {
         deliveryMode,
-        content,
+        workflows,
         dryRun,
         defaultBranch: repositoryState.defaultBranch,
         defaultRef: repositoryState.defaultRef,
@@ -775,7 +917,7 @@ async function main() {
       tokenWritePermission: requiredTokenPermissions,
     },
   );
-  const content = generateCallerWorkflow({ sourceRepository, sourceRef });
+  const workflows = generateCallerWorkflows({ sourceRepository, sourceRef });
   const {
     results,
     skippedRepositories: processingSkips,
@@ -783,7 +925,7 @@ async function main() {
   } = await processDistributionRepositories(repositories, {
     token,
     deliveryMode,
-    content,
+    workflows,
     dryRun,
   });
   const skippedRepositories = [...eligibilitySkips, ...processingSkips];

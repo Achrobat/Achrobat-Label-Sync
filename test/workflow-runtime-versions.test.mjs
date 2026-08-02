@@ -48,3 +48,24 @@ test("workflows use the current stable Node.js action stack", async () => {
   }
   assert.ok(nodeVersionCount > 0, "expected at least one explicit Node.js version");
 });
+
+test("review refresh workflow downloads trusted context and reruns the authoritative label test", async () => {
+  const workflow = await fs.readFile(
+    path.join(workflowsDirectory, "96-refresh-label-test.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /workflow_call:/);
+  assert.match(workflow, /actions:\s*write/);
+  assert.match(workflow, /uses:\s*actions\/download-artifact@v8/);
+  assert.match(workflow, /name:\s*label-test-review-context/);
+  assert.match(workflow, /run-id:\s*\$\{\{ inputs\.review_signal_run_id \}\}/);
+  assert.match(workflow, /github-token:\s*\$\{\{ github\.token \}\}/);
+  assert.match(workflow, /uses:\s*actions\/checkout@v7/);
+  assert.match(workflow, /uses:\s*actions\/setup-node@v6/);
+  assert.match(workflow, /node-version:\s*"24"/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER_FILE:\s*\$\{\{ runner\.temp \}\}\/label-test-review-context\/pr-number\.txt/);
+  assert.match(workflow, /TARGET_REPOSITORY:\s*\$\{\{ inputs\.target_repository \}\}/);
+  assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.match(workflow, /run:\s*node scripts\/rerun-label-policy\.mjs/);
+});
