@@ -34,7 +34,7 @@
     // { "label": "Affects Balance", "approver": "teams/admin" },
     // { "label": "Affects Balance", "approver": "UltraProdigy" }
     { "label": "Affects Balance", "approver": "UltraProdigy" },
-    { "label": "Requires Admin", "approver": "UltraProdigy" }
+    { "label": "Requires Admin", "approver": "teams/Admin" }
   ],
 
   // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
