@@ -679,13 +679,36 @@ async function main() {
     return;
   }
 
-  const token = process.env.LABEL_SYNC_TOKEN;
-  assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
-  const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
-  const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
-  assert(orgName, "ORG_NAME, GITHUB_REPOSITORY_OWNER, or properties.organization is required to discover organization repositories.");
 
-  const discoveredRepositories = await getOrganizationRepositories(token, orgName);
+  const writeSetupFailureChangelog = async (failure) => {
+    await writeChangelog({
+      workflowName: dryRun ? "Org-Label-Sync Fake" : "Org-Label-Sync",
+      dryRun,
+      summaryLines: () => ["The run failed before any repository was processed."],
+      skippedRepositories: [],
+      failure,
+      sections: [],
+    });
+  };
+
+  let token;
+  let tokenPermissions;
+  let orgName;
+  let discoveredRepositories;
+
+  try {
+    token = process.env.LABEL_SYNC_TOKEN;
+    assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
+    tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
+    orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
+    assert(orgName, "ORG_NAME, GITHUB_REPOSITORY_OWNER, or properties.organization is required to discover organization repositories.");
+
+    discoveredRepositories = await getOrganizationRepositories(token, orgName);
+  } catch (error) {
+    await writeSetupFailureChangelog(error);
+    throw error;
+  }
+
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
   const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, orgName, properties.sourceRepository)

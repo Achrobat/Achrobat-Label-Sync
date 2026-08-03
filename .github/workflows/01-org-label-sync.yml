@@ -64,6 +64,17 @@ jobs:
 
   sync-org:
     needs: [automatic-settings, refresh-config]
+    # refresh-config is skipped on a scheduled run when automatic sync is disabled, and a
+    # skipped dependency does not satisfy `needs`. Without this condition sync-org would
+    # silently skip along with it, producing no changelog and no failure. Gate on
+    # automatic-settings instead, and tolerate refresh-config being skipped.
+    if: >-
+      ${{
+        !cancelled()
+        && needs.automatic-settings.result == 'success'
+        && needs.refresh-config.result != 'failure'
+        && (github.event_name != 'schedule' || needs.automatic-settings.outputs.enabled == 'true')
+      }}
     runs-on: ubuntu-latest
 
     steps:
