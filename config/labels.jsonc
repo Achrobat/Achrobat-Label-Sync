@@ -48,6 +48,11 @@
     "description": "This PR was made with heavy AI assistance and needs more thorough review."
   },
   {
+    "name": "Asset Change",
+    "color": "ff48c2",
+    "description": "Changes assets, usually textures, and nothing more."
+  },
+  {
     "name": "Bug Fix",
     "color": "7ff74f",
     "description": "Fixes a bug. Please link it in the PR if an issue exists for it."
