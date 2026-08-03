@@ -515,7 +515,7 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.match(workflow, /name: Label Test/);
   assert.match(workflow, /pull_request_target:/);
   assert.doesNotMatch(workflow, /pull_request_review:/);
-  assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
+  assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
   assert.match(workflow, /label_sync_ref: main/);
   // The repository and pull request are read from the caller's context inside the
@@ -540,7 +540,7 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
 
   const policy = byPath.get(".github/workflows/label-test.yml");
   assert.match(policy, /pull_request_target:/);
-  assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
+  assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(policy, /secrets: inherit/);
   // The policy workflow must publish exactly one check, so it carries a single job
   // and reacts to a single event. A second trigger would create a second check
@@ -583,7 +583,7 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
   assert.match(refresh, /- dismissed/);
   assert.match(refresh, /name: Refresh Label Test/);
   assert.match(refresh, /actions:\s*write/);
-  assert.match(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/96-refresh-label-test\.yml@main/);
+  assert.match(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
   assert.match(refresh, /secrets: inherit/);
   assert.doesNotMatch(refresh, /target_repository:/);
   assert.doesNotMatch(refresh, /pull_request_number:/);
