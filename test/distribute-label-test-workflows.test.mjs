@@ -6,6 +6,7 @@ import {
   generateCallerWorkflows,
   normalizeDeliveryMode,
   parseTargetRepositories,
+  preflightDistributionRepository,
   processDistributionRepositories,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
@@ -371,6 +372,144 @@ test("processDistributionRepositories forwards the generated workflow set to its
   });
 
   assert.deepEqual(receivedWorkflows, workflows);
+});
+
+test("preflightDistributionRepository blocks direct commits to a protected default branch", async () => {
+  const calls = [];
+  const api = {
+    async getDefaultBranch() {
+      return "main";
+    },
+    async getBranchRef() {
+      return { object: { sha: "default-sha" } };
+    },
+    async getBranch(token, repository, branch) {
+      calls.push({ repository, branch });
+      return { name: branch, protected: true };
+    },
+  };
+
+  const state = await preflightDistributionRepository("token", { full_name: "example/alpha" }, {
+    api,
+    deliveryMode: "direct_commit",
+  });
+
+  assert.deepEqual(calls, [{ repository: "example/alpha", branch: "main" }]);
+  assert.match(state.blockedReason, /protected/);
+  assert.match(state.blockedReason, /Pull Request mode/);
+  assert.equal(state.defaultBranch, undefined);
+});
+
+test("preflightDistributionRepository does not check protection in pull request mode", async () => {
+  let checkedProtection = false;
+  const api = {
+    async getDefaultBranch() {
+      return "main";
+    },
+    async getBranchRef() {
+      return { object: { sha: "default-sha" } };
+    },
+    async getBranch() {
+      checkedProtection = true;
+      return { protected: true };
+    },
+  };
+
+  const state = await preflightDistributionRepository("token", { full_name: "example/alpha" }, {
+    api,
+    deliveryMode: "open_pr",
+  });
+
+  assert.equal(checkedProtection, false);
+  assert.equal(state.blockedReason, undefined);
+  assert.equal(state.defaultBranch, "main");
+});
+
+test("processDistributionRepositories records a blocked repository and keeps going", async () => {
+  const processed = [];
+  const preflight = async (token, repository) => (
+    repository.full_name === "example/protected"
+      ? { blockedReason: 'Default branch "main" is protected, so Direct Commit cannot write to it.' }
+      : { defaultBranch: "main", defaultRef: { object: { sha: "default-sha" } } }
+  );
+
+  const outcome = await processDistributionRepositories([
+    { full_name: "example/protected" },
+    { full_name: "example/ready" },
+  ], {
+    token: "token",
+    deliveryMode: "direct_commit",
+    workflows: [],
+    dryRun: false,
+    preflight,
+    write: async (token, repository) => {
+      processed.push(repository.full_name);
+      return { repository: repository.full_name, status: "created", branch: "main" };
+    },
+  });
+
+  // The blocked repository must not halt the run the way an unexpected API error does.
+  assert.deepEqual(processed, ["example/ready"]);
+  assert.deepEqual(
+    outcome.results.map((result) => [result.repository, result.status]),
+    [["example/protected", "failed"], ["example/ready", "created"]],
+  );
+  assert.equal(outcome.results[0].stage, "preflight");
+  assert.match(outcome.results[0].error, /protected/);
+  assert.equal(outcome.skippedRepositories.length, 0);
+  // Still reported as a failure overall so the run ends red.
+  assert.match(outcome.processingError.message, /protected/);
+  assert.ok(outcome.results.every((result) => result.status !== "not_processed"));
+});
+
+test("dry run reports a protected repository instead of claiming it would be written", async () => {
+  const mutations = [];
+  const api = {
+    async getDefaultBranch() {
+      return "main";
+    },
+    async getBranchRef() {
+      return { object: { sha: "default-sha" } };
+    },
+    async getBranch() {
+      return { protected: true };
+    },
+    async getFileContent() {
+      return null;
+    },
+    async createBranchRef(token, repository) {
+      mutations.push({ operation: "createBranchRef", repository });
+      return { object: { sha: "x" } };
+    },
+    async createCommitOnBranch(token, repository) {
+      mutations.push({ operation: "createCommitOnBranch", repository });
+      return { oid: "x" };
+    },
+    async createUpdatePullRequest(token, repository) {
+      mutations.push({ operation: "createUpdatePullRequest", repository });
+      return { number: 1 };
+    },
+  };
+
+  const outcome = await processDistributionRepositories([
+    { full_name: "example/protected" },
+  ], {
+    token: "token",
+    deliveryMode: "direct_commit",
+    workflows: workflowSet,
+    dryRun: true,
+    api,
+  });
+
+  // A dry run that reported "would create" for a repository it definitively cannot write
+  // to would be worse than useless, so the block is surfaced during the preview too.
+  assert.deepEqual(
+    outcome.results.map((result) => [result.repository, result.status]),
+    [["example/protected", "failed"]],
+  );
+  assert.match(outcome.results[0].error, /protected/);
+  // Whatever it reports, a dry run must never write.
+  assert.deepEqual(mutations, []);
 });
 
 test("processDistributionRepositories stops after the first unexpected failure", async () => {

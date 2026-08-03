@@ -479,6 +479,16 @@ async function createCommitOnBranch(
   return data.createCommitOnBranch.commit;
 }
 
+async function getBranch(token, repositoryFullName, branchName) {
+  return githubRequest(
+    token,
+    "GET",
+    `/repos/${repositoryFullName}/branches/${encodeURIComponent(branchName).replace(/%2F/g, "/")}`,
+    null,
+    { allowNotFound: true },
+  );
+}
+
 async function getBranchRef(
   token,
   repositoryFullName,
@@ -536,6 +546,7 @@ const defaultDistributionApi = {
   getDefaultBranch,
   getFileContent,
   createCommitOnBranch,
+  getBranch,
   getBranchRef,
   createBranchRef,
   getOpenUpdatePullRequest,
@@ -810,7 +821,7 @@ export async function writeCallerWorkflows(
 export async function preflightDistributionRepository(
   token,
   repository,
-  { api = defaultDistributionApi } = {},
+  { api = defaultDistributionApi, deliveryMode = null } = {},
 ) {
   const defaultBranch = await runDistributionStage(
     "preflight",
@@ -828,6 +839,23 @@ export async function preflightDistributionRepository(
 
   if (!defaultRef) {
     return { skipReason: "empty" };
+  }
+
+  // A protected default branch cannot accept a direct commit. This is reported as a
+  // failure rather than a skip, because the repository was selected for delivery and did
+  // not receive it, but it does not stop the run: the remaining repositories are
+  // unaffected and there is nothing to diagnose beyond rerunning in Pull Request mode.
+  if (deliveryMode === "direct_commit") {
+    const branch = await runDistributionStage(
+      "preflight",
+      () => api.getBranch(token, repository.full_name, defaultBranch),
+    );
+
+    if (branch?.protected) {
+      return {
+        blockedReason: `Default branch "${defaultBranch}" is protected, so Direct Commit cannot write to it. Rerun this repository in Pull Request mode.`,
+      };
+    }
   }
 
   return { defaultBranch, defaultRef };
@@ -853,12 +881,27 @@ export async function processDistributionRepositories(
     const repository = repositories[index];
 
     try {
-      const repositoryState = await preflight(token, repository, { api });
+      const repositoryState = await preflight(token, repository, { api, deliveryMode });
 
       if (repositoryState.skipReason) {
         skippedRepositories.push({
           repository: repository.full_name,
           reason: repositoryState.skipReason,
+        });
+        continue;
+      }
+
+      // Recorded as a failure so the run still ends red and the repository is visible in
+      // the summary, but the loop carries on. Unlike an unexpected API error, a blocked
+      // repository says nothing about whether the next one will succeed.
+      if (repositoryState.blockedReason) {
+        processingError ??= new Error(repositoryState.blockedReason);
+        results.push({
+          repository: repository.full_name,
+          status: "failed",
+          stage: "preflight",
+          branch: "",
+          error: repositoryState.blockedReason,
         });
         continue;
       }
