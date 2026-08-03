@@ -7,10 +7,8 @@ import {
   normalizeDeliveryMode,
   parseTargetRepositories,
   processDistributionRepositories,
-  removeCallerWorkflow,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
-  writeCallerWorkflow,
   writeCallerWorkflows,
 } from "../scripts/distribute-label-test-workflows.mjs";
 
@@ -25,14 +23,30 @@ function encodeContent(value) {
   return value === null ? null : Buffer.from(value, "utf8").toString("base64");
 }
 
+const updateBranch = "label-sync/update-label-test-workflow";
+const legacyWorkflowPath = ".github/workflows/label-test-review-signal.yml";
+
+const workflowSet = [
+  { path: ".github/workflows/label-test.yml", content: "policy" },
+  { path: ".github/workflows/label-test-review-refresh.yml", content: "signal" },
+];
+
+const currentWorkflowFiles = {
+  ".github/workflows/label-test.yml": "policy",
+  ".github/workflows/label-test-review-refresh.yml": "signal",
+};
+
 function createFakeDistributionApi({
-  defaultContent = null,
-  updateContent = null,
+  files = {},
   updateBranchExists = true,
   pullRequest = null,
 } = {}) {
   const calls = [];
   const api = {
+    async getDefaultBranch(token, repository) {
+      calls.push({ operation: "getDefaultBranch", repository });
+      return "main";
+    },
     async getBranchRef(token, repository, branch) {
       calls.push({ operation: "getBranchRef", repository, branch });
 
@@ -48,16 +62,14 @@ function createFakeDistributionApi({
     },
     async getFileContent(token, repository, filePath, ref) {
       calls.push({ operation: "getFileContent", repository, filePath, ref });
-      const value = ref === "main" ? defaultContent : updateContent;
-      return value === null ? null : { content: encodeContent(value), sha: `${ref}-file-sha` };
+      const value = files[ref]?.[filePath];
+      return value === undefined
+        ? null
+        : { content: encodeContent(value), sha: `${ref}-file-sha` };
     },
-    async putFileContent(token, repository, filePath, options) {
-      calls.push({ operation: "putFileContent", repository, filePath, options });
-      return { content: { sha: "new-file-sha" } };
-    },
-    async deleteFileContent(token, repository, filePath, options) {
-      calls.push({ operation: "deleteFileContent", repository, filePath, options });
-      return { commit: { sha: "delete-commit-sha" } };
+    async createCommitOnBranch(token, repository, options) {
+      calls.push({ operation: "createCommitOnBranch", repository, options });
+      return { oid: "commit-oid", url: `https://github.com/${repository}/commit/commit-oid` };
     },
     async getOpenUpdatePullRequest(token, repository, owner, branch) {
       calls.push({ operation: "getOpenUpdatePullRequest", repository, owner, branch });
@@ -72,325 +84,224 @@ function createFakeDistributionApi({
   return { api, calls };
 }
 
-test("writeCallerWorkflow reuses an existing update branch before committing and opening a PR", async () => {
-  const { api, calls } = createFakeDistributionApi({ updateBranchExists: true });
-  const content = "name: Generated workflow\n";
+function countCalls(calls, operation) {
+  return calls.filter((call) => call.operation === operation).length;
+}
 
-  const result = await writeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    content,
+function findCommit(calls) {
+  return calls.find((call) => call.operation === "createCommitOnBranch");
+}
+
+function distributionOptions(api, overrides = {}) {
+  return {
+    workflows: workflowSet,
+    deliveryMode: "direct_commit",
     dryRun: false,
     defaultBranch: "main",
     defaultRef: { object: { sha: "default-sha" } },
     api,
+    ...overrides,
+  };
+}
+
+test("writeCallerWorkflows delivers every generated workflow in a single commit", async () => {
+  const { api, calls } = createFakeDistributionApi({ files: {} });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+
+  const commit = findCommit(calls);
+  assert.deepEqual(
+    commit.options.additions.map((addition) => addition.path),
+    workflowSet.map((workflow) => workflow.path),
+  );
+  assert.deepEqual(commit.options.deletions, []);
+  assert.equal(commit.options.branch, "main");
+  assert.equal(commit.options.expectedHeadOid, "default-sha");
+  assert.equal(result.status, "created");
+  assert.equal(result.branch, "main");
+});
+
+test("writeCallerWorkflows folds the obsolete workflow deletion into the same commit", async () => {
+  const { api, calls } = createFakeDistributionApi({
+    files: { main: { [legacyWorkflowPath]: "obsolete" } },
   });
 
-  assert.equal(calls.filter((call) => call.operation === "createBranchRef").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "putFileContent").length, 1);
-  assert.equal(calls.filter((call) => call.operation === "createUpdatePullRequest").length, 1);
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+
+  const commit = findCommit(calls);
+  assert.equal(commit.options.additions.length, 2);
+  assert.deepEqual(commit.options.deletions, [legacyWorkflowPath]);
   assert.equal(result.status, "created");
+});
+
+test("writeCallerWorkflows only commits the workflows that actually changed", async () => {
+  const { api, calls } = createFakeDistributionApi({
+    files: { main: { ".github/workflows/label-test.yml": "policy" } },
+  });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api),
+  );
+
+  const commit = findCommit(calls);
+  assert.deepEqual(
+    commit.options.additions.map((addition) => addition.path),
+    [".github/workflows/label-test-review-refresh.yml"],
+  );
+  assert.equal(result.status, "updated");
+});
+
+test("writeCallerWorkflows reuses an existing update branch instead of creating one", async () => {
+  const { api, calls } = createFakeDistributionApi({ updateBranchExists: true, files: {} });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { deliveryMode: "open_pr" }),
+  );
+
+  assert.equal(countCalls(calls, "createBranchRef"), 0);
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+
+  const commit = findCommit(calls);
+  assert.equal(commit.options.branch, updateBranch);
+  assert.equal(commit.options.expectedHeadOid, "update-sha");
+  assert.equal(result.branch, updateBranch);
   assert.equal(result.pullRequest.number, 42);
 });
 
-test("writeCallerWorkflow creates a missing PR when the workflow commit already exists", async () => {
-  const content = "name: Generated workflow\n";
+test("writeCallerWorkflows creates the update branch when it is missing", async () => {
+  const { api, calls } = createFakeDistributionApi({ updateBranchExists: false, files: {} });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { deliveryMode: "open_pr" }),
+  );
+
+  assert.equal(countCalls(calls, "createBranchRef"), 1);
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+
+  const commit = findCommit(calls);
+  assert.equal(commit.options.branch, updateBranch);
+  assert.equal(commit.options.expectedHeadOid, "default-sha");
+  assert.equal(result.status, "created");
+});
+
+test("writeCallerWorkflows reports unchanged without committing", async () => {
   const { api, calls } = createFakeDistributionApi({
-    defaultContent: "name: Previous workflow\n",
-    updateContent: content,
+    updateBranchExists: false,
+    files: { main: currentWorkflowFiles },
+  });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 0);
+  assert.equal(result.status, "unchanged");
+  assert.equal(result.branch, "main");
+});
+
+test("writeCallerWorkflows opens a missing pull request when the update branch already carries the change", async () => {
+  const { api, calls } = createFakeDistributionApi({
     updateBranchExists: true,
+    files: { [updateBranch]: currentWorkflowFiles, main: {} },
   });
 
-  const result = await writeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    content,
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { deliveryMode: "open_pr" }),
+  );
 
-  assert.equal(calls.filter((call) => call.operation === "putFileContent").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "createUpdatePullRequest").length, 1);
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 0);
   assert.equal(result.status, "unchanged");
   assert.equal(result.pullRequest.number, 42);
 });
 
-test("writeCallerWorkflow does not create a branch when the default branch is already current", async () => {
-  const content = "name: Generated workflow\n";
+test("writeCallerWorkflows does not reopen a pull request when the default branch is current", async () => {
   const { api, calls } = createFakeDistributionApi({
-    defaultContent: content,
-    updateBranchExists: false,
-  });
-
-  const result = await writeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    content,
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
-
-  assert.equal(calls.filter((call) => call.operation === "createBranchRef").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "putFileContent").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "createUpdatePullRequest").length, 0);
-  assert.deepEqual(result, {
-    repository: "example/alpha",
-    status: "unchanged",
-    branch: "main",
-  });
-});
-
-test("writeCallerWorkflow dry-run mode performs no mutations", async () => {
-  const { api, calls } = createFakeDistributionApi({
-    defaultContent: "name: Previous workflow\n",
-    updateBranchExists: false,
-  });
-
-  const result = await writeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    content: "name: Generated workflow\n",
-    dryRun: true,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
-
-  assert.equal(calls.filter((call) => call.operation === "createBranchRef").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "putFileContent").length, 0);
-  assert.equal(calls.filter((call) => call.operation === "createUpdatePullRequest").length, 0);
-  assert.equal(result.status, "would_update");
-});
-
-test("writeCallerWorkflow reads and writes the requested generated workflow path", async () => {
-  const { api, calls } = createFakeDistributionApi({ updateBranchExists: true });
-
-  await writeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    content: "name: Review signal\n",
-    filePath: ".github/workflows/label-test-review-refresh.yml",
-    commitMessage: "Update Label Test review refresh workflow",
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
-
-  const fileCalls = calls.filter((call) => (
-    call.operation === "getFileContent" || call.operation === "putFileContent"
-  ));
-  assert.ok(fileCalls.length > 0);
-  assert.ok(fileCalls.every((call) => (
-    call.filePath === ".github/workflows/label-test-review-refresh.yml"
-  )));
-  const writeCall = calls.find((call) => call.operation === "putFileContent");
-  assert.equal(writeCall.options.message, "Update Label Test review refresh workflow");
-});
-
-test("writeCallerWorkflow identifies the workflow-file stage on write failure", async () => {
-  const { api } = createFakeDistributionApi({ updateBranchExists: true });
-  api.putFileContent = async () => {
-    throw new Error("write rejected");
-  };
-
-  await assert.rejects(
-    () => writeCallerWorkflow("token", {
-      full_name: "example/alpha",
-      owner: { login: "example" },
-    }, {
-      deliveryMode: "open_pr",
-      content: "name: Generated workflow\n",
-      dryRun: false,
-      defaultBranch: "main",
-      defaultRef: { object: { sha: "default-sha" } },
-      api,
-    }),
-    (error) => error.message === "write rejected" && error.stage === "workflow_file",
-  );
-});
-
-test("removeCallerWorkflow deletes an obsolete workflow from the default branch", async () => {
-  const { api, calls } = createFakeDistributionApi({
-    defaultContent: "name: Obsolete refresh\n",
-  });
-
-  const result = await removeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "direct_commit",
-    filePath: ".github/workflows/label-test-review-signal.yml",
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
-
-  const deleteCall = calls.find((call) => call.operation === "deleteFileContent");
-  assert.equal(deleteCall.filePath, ".github/workflows/label-test-review-signal.yml");
-  assert.equal(deleteCall.options.branch, "main");
-  assert.equal(deleteCall.options.sha, "main-file-sha");
-  assert.equal(result.status, "updated");
-});
-
-test("removeCallerWorkflow deletes an obsolete workflow on the update branch and reuses its PR", async () => {
-  const pullRequest = { number: 12, html_url: "https://github.com/example/alpha/pull/12" };
-  const { api, calls } = createFakeDistributionApi({
-    updateContent: "name: Obsolete refresh\n",
     updateBranchExists: true,
-    pullRequest,
+    files: { [updateBranch]: currentWorkflowFiles, main: currentWorkflowFiles },
   });
 
-  const result = await removeCallerWorkflow("token", {
-    full_name: "example/alpha",
-    owner: { login: "example" },
-  }, {
-    deliveryMode: "open_pr",
-    filePath: ".github/workflows/label-test-review-signal.yml",
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    api,
-  });
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { deliveryMode: "open_pr" }),
+  );
 
-  const deleteCall = calls.find((call) => call.operation === "deleteFileContent");
-  assert.equal(deleteCall.options.branch, "label-sync/update-label-test-workflow");
-  assert.equal(result.pullRequest, pullRequest);
+  assert.equal(countCalls(calls, "createUpdatePullRequest"), 0);
+  assert.equal(result.status, "unchanged");
+  assert.equal(result.pullRequest, undefined);
 });
 
-test("writeCallerWorkflows delivers every generated workflow as one repository result", async () => {
-  const calls = [];
-  const write = async (token, repository, options) => {
-    calls.push({ token, repository: repository.full_name, options });
-    const statuses = {
-      ".github/workflows/label-test.yml": "unchanged",
-      ".github/workflows/label-test-review-refresh.yml": "created",
-    };
-    const result = {
-      repository: repository.full_name,
-      status: statuses[options.filePath],
-      branch: "label-sync/update-label-test-workflow",
-    };
+test("writeCallerWorkflows dry-run mode performs no mutations", async () => {
+  const { api, calls } = createFakeDistributionApi({ updateBranchExists: false, files: {} });
 
-    return result;
-  };
-  const remove = async (token, repository, options) => {
-    calls.push({ token, repository: repository.full_name, options, remove: true });
-    return {
-      repository: repository.full_name,
-      status: "updated",
-      branch: "label-sync/update-label-test-workflow",
-      pullRequest: { number: 12, html_url: "https://github.com/example/alpha/pull/12" },
-    };
-  };
-  const workflows = [
-    { path: ".github/workflows/label-test.yml", content: "policy" },
-    { path: ".github/workflows/label-test-review-refresh.yml", content: "signal" },
-  ];
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { deliveryMode: "open_pr", dryRun: true }),
+  );
 
-  const result = await writeCallerWorkflows("token", {
-    full_name: "example/alpha",
-  }, {
-    workflows,
-    deliveryMode: "open_pr",
-    dryRun: false,
-    defaultBranch: "main",
-    defaultRef: { object: { sha: "default-sha" } },
-    write,
-    remove,
-  });
-
-  assert.deepEqual(calls.map((call) => call.options.filePath), [
-    ...workflows.map((workflow) => workflow.path),
-    ".github/workflows/label-test-review-signal.yml",
-  ]);
-  assert.ok(calls.every((call) => call.options.deliveryMode === "open_pr"));
-  assert.equal(result.status, "updated");
-  assert.equal(result.branch, "label-sync/update-label-test-workflow");
-  assert.equal(result.pullRequest.number, 12);
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 0);
+  assert.equal(countCalls(calls, "createBranchRef"), 0);
+  assert.equal(countCalls(calls, "createUpdatePullRequest"), 0);
+  assert.equal(result.status, "would_create");
+  assert.equal(result.branch, updateBranch);
 });
 
-test("writeCallerWorkflows preserves dry-run status without applying later workflows", async () => {
-  const writes = [];
-  const write = async (token, repository, options) => {
-    writes.push(options.filePath);
-    return {
-      repository: repository.full_name,
-      status: options.filePath.endsWith("label-test.yml") ? "unchanged" : "would_create",
-      branch: "label-sync/update-label-test-workflow",
-    };
-  };
-  const remove = async (token, repository, options) => {
-    writes.push(options.filePath);
-    return {
-      repository: repository.full_name,
-      status: "would_update",
-      branch: "label-sync/update-label-test-workflow",
-    };
-  };
-
-  const result = await writeCallerWorkflows("token", { full_name: "example/alpha" }, {
-    workflows: [
-      { path: ".github/workflows/label-test.yml", content: "policy" },
-      { path: ".github/workflows/label-test-review-refresh.yml", content: "signal" },
-    ],
-    deliveryMode: "open_pr",
-    dryRun: true,
-    write,
-    remove,
+test("writeCallerWorkflows dry-run reports an update when an existing workflow differs", async () => {
+  const { api, calls } = createFakeDistributionApi({
+    files: { main: { ".github/workflows/label-test.yml": "stale" } },
   });
 
-  assert.equal(writes.length, 3);
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { dryRun: true }),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 0);
   assert.equal(result.status, "would_update");
 });
 
-test("writeCallerWorkflows stops at the first workflow-file failure", async () => {
-  const writes = [];
-  const write = async (token, repository, options) => {
-    writes.push(options.filePath);
-
-    if (options.filePath.endsWith("review-refresh.yml")) {
-      throw new Error("signal write rejected");
-    }
-
-    return {
-      repository: repository.full_name,
-      status: "updated",
-      branch: "main",
-    };
+test("writeCallerWorkflows identifies the workflow-file stage on commit failure", async () => {
+  const { api } = createFakeDistributionApi({ files: {} });
+  api.createCommitOnBranch = async () => {
+    throw new Error("commit rejected");
   };
 
   await assert.rejects(
-    () => writeCallerWorkflows("token", { full_name: "example/alpha" }, {
-      workflows: [
-        { path: ".github/workflows/label-test.yml", content: "policy" },
-        { path: ".github/workflows/label-test-review-refresh.yml", content: "signal" },
-      ],
-      deliveryMode: "direct_commit",
-      dryRun: false,
-      write,
-    }),
-    /signal write rejected/,
+    () => writeCallerWorkflows(
+      "token",
+      { full_name: "example/alpha" },
+      distributionOptions(api),
+    ),
+    (error) => {
+      assert.equal(error.stage, "workflow_file");
+      assert.match(error.message, /commit rejected/);
+      return true;
+    },
   );
-  assert.deepEqual(writes, [
-    ".github/workflows/label-test.yml",
-    ".github/workflows/label-test-review-refresh.yml",
-  ]);
 });
 
 test("processDistributionRepositories skips an empty repository and continues", async () => {
@@ -607,8 +518,12 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/97-label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
   assert.match(workflow, /label_sync_ref: main/);
-  assert.match(workflow, /target_repository: \$\{\{ github\.repository \}\}/);
-  assert.match(workflow, /pull_request_number: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  // The repository and pull request are read from the caller's context inside the
+  // reusable workflow, so they must not reappear as inputs here. Every input in this
+  // file is a reason the distributed callers would need updating again later.
+  assert.doesNotMatch(workflow, /target_repository:/);
+  assert.doesNotMatch(workflow, /pull_request_number:/);
+  assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 2);
 });
 
 test("generateCallerWorkflows emits one policy workflow and one review refresh workflow", () => {
@@ -636,6 +551,29 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
   assert.doesNotMatch(policy, /name: Refresh Label Test/);
   assert.doesNotMatch(policy, /actions:\s*write/);
   assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
+  // Permission headroom: the caller caps what the reusable workflow can ever be granted,
+  // so it is deliberately wider than what the reusable workflow uses today. An unused
+  // permission costs nothing, and narrowing these would mean redistributing to every
+  // target repository just to enable a new capability.
+  assert.match(policy, /pull-requests: write/);
+  assert.match(policy, /checks: write/);
+  // Triggers get the opposite treatment. This workflow publishes a required check, so
+  // every extra type costs a runner and a pending check on each occurrence. Events that
+  // cannot change the label or approval verdict must stay out.
+  assert.doesNotMatch(policy, /- edited/);
+  assert.doesNotMatch(policy, /- converted_to_draft/);
+  // Review state reaches this check through the refresh workflow, not directly, so
+  // neither review request type belongs here.
+  assert.doesNotMatch(policy, /- review_requested/);
+  assert.doesNotMatch(policy, /- review_request_removed/);
+  assert.deepEqual(policy.match(/^ {6}- [a-z_]+$/gm).map((line) => line.trim().slice(2)), [
+    "opened",
+    "synchronize",
+    "reopened",
+    "labeled",
+    "unlabeled",
+    "ready_for_review",
+  ]);
 
   const refresh = byPath.get(".github/workflows/label-test-review-refresh.yml");
   assert.match(refresh, /name: Label Test Review Refresh/);
@@ -646,7 +584,9 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
   assert.match(refresh, /name: Refresh Label Test/);
   assert.match(refresh, /actions:\s*write/);
   assert.match(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/96-refresh-label-test\.yml@main/);
-  assert.match(refresh, /pull_request_number: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(refresh, /secrets: inherit/);
+  assert.doesNotMatch(refresh, /target_repository:/);
+  assert.doesNotMatch(refresh, /pull_request_number:/);
   // The artifact handshake is gone; the PR number comes straight from the event payload.
   assert.doesNotMatch(refresh, /upload-artifact/);
   assert.doesNotMatch(refresh, /label-test-review-context/);

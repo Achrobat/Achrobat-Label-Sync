@@ -11,14 +11,9 @@ on:
         description: "Ref to check out from the central Label Sync repository."
         required: true
         type: string
-      target_repository:
-        description: "Repository containing the pull request and Label Test workflow run."
-        required: true
-        type: string
-      pull_request_number:
-        description: "Pull request whose authoritative Label Test run should be rerun."
-        required: true
-        type: number
+
+# The repository and pull request are read from the caller's context rather than passed
+# as inputs. See the equivalent note in 97-label-test.yml.
 
 permissions:
   actions: write
@@ -43,6 +38,6 @@ jobs:
       - name: Rerun authoritative Label Test
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          TARGET_REPOSITORY: ${{ inputs.target_repository }}
-          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/rerun-label-policy.mjs

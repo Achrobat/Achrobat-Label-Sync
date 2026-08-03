@@ -57,12 +57,15 @@ test("review refresh workflow takes the pull request number directly and reruns 
 
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /actions:\s*write/);
-  assert.match(workflow, /pull_request_number:/);
   assert.match(workflow, /uses:\s*actions\/checkout@v7/);
   assert.match(workflow, /uses:\s*actions\/setup-node@v6/);
   assert.match(workflow, /node-version:\s*"24"/);
-  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ inputs\.pull_request_number \}\}/);
-  assert.match(workflow, /TARGET_REPOSITORY:\s*\$\{\{ inputs\.target_repository \}\}/);
+  // Derived from the caller's context rather than passed in, so the distributed caller
+  // workflows do not have to change when this workflow does.
+  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /TARGET_REPOSITORY:\s*\$\{\{ github\.repository \}\}/);
+  assert.doesNotMatch(workflow, /inputs\.pull_request_number/);
+  assert.doesNotMatch(workflow, /inputs\.target_repository/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /run:\s*node scripts\/rerun-label-policy\.mjs/);
 
@@ -80,7 +83,9 @@ test("the distributed policy workflow is the only required label test check", as
   );
 
   assert.match(workflow, /workflow_call:/);
-  assert.match(workflow, /pull_request_number:/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
   assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
   assert.doesNotMatch(workflow, /actions:\s*write/);
+  assert.doesNotMatch(workflow, /inputs\.pull_request_number/);
+  assert.doesNotMatch(workflow, /inputs\.target_repository/);
 });
