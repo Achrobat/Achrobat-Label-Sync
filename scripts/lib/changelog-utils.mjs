@@ -163,11 +163,6 @@ export async function writeChangelog({
   const visibleWorkflowName = formatVisibleWorkflowName(workflowName);
   const changedSections = sections.filter((section) => section.hasChanges);
 
-  if (changedSections.length === 0 && skippedRepositories.length === 0 && !failure) {
-    console.log("No repository changes detected; changelog was not written to the workflow summary.");
-    return null;
-  }
-
   const now = new Date();
   const metadata = getWorkflowMetadata(visibleWorkflowName);
   const timestamp = formatUtcTimestamp(now);
