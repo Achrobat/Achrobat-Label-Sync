@@ -7,6 +7,42 @@ import test from "node:test";
 import { renderLabelSyncSection, renderRemoveLabelsSection, writeChangelog } from "../scripts/lib/changelog-utils.mjs";
 import { renderInventorySummary } from "../scripts/inventory-labels.mjs";
 
+test("writeChangelog still writes a summary when nothing changed", async () => {
+  const originalSummaryPath = process.env.GITHUB_STEP_SUMMARY;
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-changelog-"));
+  const summaryPath = path.join(workspace, "step-summary.md");
+
+  try {
+    process.env.GITHUB_STEP_SUMMARY = summaryPath;
+
+    const result = await writeChangelog({
+      workflowName: "Org-Label-Sync",
+      summaryLines: () => ["Repositories Affected: 0"],
+      sections: [{ repository: "example/alpha", hasChanges: false, lines: [] }],
+      skippedRepositories: [],
+      failure: null,
+    });
+
+    // A steady-state run must not be silent: an empty job summary is indistinguishable
+    // from a run that failed before it could report anything.
+    assert.equal(result, summaryPath);
+
+    const written = await fs.readFile(summaryPath, "utf8");
+    assert.match(written, /# Org-Label-Sync Changelog/);
+    assert.match(written, /\*\*Repositories Affected:\*\* 0/);
+    assert.match(written, /No repository changes detected\./);
+    assert.doesNotMatch(written, /## Workflow Failure/);
+  } finally {
+    if (originalSummaryPath === undefined) {
+      delete process.env.GITHUB_STEP_SUMMARY;
+    } else {
+      process.env.GITHUB_STEP_SUMMARY = originalSummaryPath;
+    }
+
+    await fs.rm(workspace, { force: true, recursive: true });
+  }
+});
+
 test("writeChangelog appends unchanged Markdown formatting to the GitHub step summary", async () => {
   const originalCwd = process.cwd();
   const originalSummaryPath = process.env.GITHUB_STEP_SUMMARY;
