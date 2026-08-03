@@ -516,16 +516,18 @@ async function getOpenUpdatePullRequest(token, repositoryFullName, headOwner, br
   return pulls[0] ?? null;
 }
 
+
+export const distributionPullRequestTitle = "Update Label Test Workflows";
+
 async function createUpdatePullRequest(token, repositoryFullName, { branchName, baseBranch }) {
   return githubRequest(
     token,
     "POST",
     `/repos/${repositoryFullName}/pulls`,
     {
-      title: "Update Label Test workflows",
+      title: distributionPullRequestTitle,
       head: branchName,
       base: baseBranch,
-      body: "Updates the generated policy and review signal workflows for the central Label Test workflow.",
     },
   );
 }
