@@ -51,7 +51,7 @@ test("workflows use the current stable Node.js action stack", async () => {
 
 test("review refresh workflow takes the pull request number directly and reruns the authoritative label test", async () => {
   const workflow = await fs.readFile(
-    path.join(workflowsDirectory, "96-refresh-label-test.yml"),
+    path.join(workflowsDirectory, "refresh-label-test.yml"),
     "utf8",
   );
 
@@ -78,7 +78,7 @@ test("review refresh workflow takes the pull request number directly and reruns 
 
 test("the distributed policy workflow is the only required label test check", async () => {
   const workflow = await fs.readFile(
-    path.join(workflowsDirectory, "97-label-test.yml"),
+    path.join(workflowsDirectory, "label-test.yml"),
     "utf8",
   );
 
