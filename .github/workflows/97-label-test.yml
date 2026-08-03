@@ -11,14 +11,11 @@ on:
         description: "Ref to check out from the central Label Sync repository."
         required: true
         type: string
-      target_repository:
-        description: "Repository containing the pull request being checked."
-        required: true
-        type: string
-      pull_request_number:
-        description: "Pull request number to evaluate."
-        required: true
-        type: number
+
+# The repository and pull request under test are read from the caller's context rather
+# than passed as inputs: inside a reusable workflow, github.repository resolves to the
+# calling repository and github.event is the caller's triggering event. Keeping them out
+# of the input contract means the distributed caller workflows never need to change.
 
 permissions:
   contents: read
@@ -68,7 +65,7 @@ jobs:
 
       - name: Check PR labels and approvals
         env:
-          TARGET_REPOSITORY: ${{ inputs.target_repository }}
-          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-pr-label-policy.mjs
