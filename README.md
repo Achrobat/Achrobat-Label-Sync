@@ -220,6 +220,8 @@ When `repositories` is provided, it takes priority over `repository_selection_mo
 
 The distributor skips archived repositories, empty repositories with no default-branch commit, and repositories whose available token permissions cannot perform the selected delivery mode. It then completes the branch, workflow commit, and pull request for one repository before starting the next. The first unexpected operational failure stops the run; rerunning it reuses any branch, commit, or pull request already created and continues without requiring branch cleanup.
 
+In `Direct Commit` mode, a repository whose default branch is protected is recorded as a failure and the run continues to the next repository. Branch protection is a property of the target repository rather than an operational fault, so it says nothing about whether the remaining repositories will succeed. Rerun those repositories in `Pull Request` mode. The distributor does not attempt to bypass branch protection, and the token it uses is not granted the rights to do so.
+
 After the workflows are merged into a target repository, make only `Label Test / label-test / label-test` required in that repository's branch protection rules. Do not require `Refresh Label Test`; it is an operational helper. The target repository's Actions policy must allow the refresher's requested `actions: write` permission so it can rerun the policy workflow.
 
 ### Config-Reset
