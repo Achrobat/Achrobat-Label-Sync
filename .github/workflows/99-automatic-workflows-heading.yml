@@ -1,4 +1,4 @@
-name: "99 ==== Automatic Workflows: ===="
+name: "99 --- Automatic Workflows: ---"
 
 on:
   workflow_call:
