@@ -138,8 +138,8 @@ permissions:
 
 jobs:
   label-test:
-    if: \${{ github.event_name == 'pull_request_target' }}
     permissions:
+      actions: read
       contents: read
       checks: write
       issues: write
@@ -149,20 +149,8 @@ jobs:
     with:
       label_sync_repository: ${sourceRepository}
       label_sync_ref: ${sourceRef}
-    secrets: inherit
-
-  refresh-label-test:
-    name: Refresh Label Test
-    if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review' && github.event.workflow_run.conclusion == 'success' }}
-    permissions:
-      actions: write
-      contents: read
-    uses: ${sourceRepository}/.github/workflows/refresh-label-test.yml@${sourceRef}
-    with:
-      label_sync_repository: ${sourceRepository}
-      label_sync_ref: ${sourceRef}
-      review_signal_run_id: \${{ github.event.workflow_run.id }}
-      review_signal_head_sha: \${{ github.event.workflow_run.head_sha }}
+      review_signal_run_id: \${{ github.event.workflow_run.id || 0 }}
+      review_signal_head_sha: \${{ github.event.workflow_run.head_sha || '' }}
     secrets: inherit
 `;
 }

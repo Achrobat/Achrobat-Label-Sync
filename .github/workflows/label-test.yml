@@ -11,13 +11,24 @@ on:
         description: "Ref to check out from the central Label Sync repository."
         required: true
         type: string
+      review_signal_run_id:
+        description: "Review signal workflow run whose artifact identifies the pull request."
+        required: false
+        type: number
+        default: 0
+      review_signal_head_sha:
+        description: "Pull request head SHA recorded by the review signal workflow run."
+        required: false
+        type: string
+        default: ""
 
-# The repository and pull request under test are read from the caller's context rather
-# than passed as inputs: inside a reusable workflow, github.repository resolves to the
-# calling repository and github.event is the caller's triggering event. Keeping them out
-# of the input contract means the distributed caller workflows never need to change.
+# The target repository and event are read from the caller's context: inside a reusable
+# workflow, github.repository and github.event describe the calling workflow. The review
+# artifact is untrusted input and is validated against the workflow run's recorded head
+# SHA before the configured PAT or GitHub App token reruns the authoritative policy run.
 
 permissions:
+  actions: read
   contents: read
   issues: read
   pull-requests: read
@@ -27,6 +38,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Download review context
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: label-test-review-context
+          path: ${{ runner.temp }}/label-test-review-context
+          run-id: ${{ inputs.review_signal_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Check out Label Sync repository
         uses: actions/checkout@v7
         with:
@@ -64,8 +84,18 @@ jobs:
         run: node scripts/create-github-auth-token.mjs
 
       - name: Check PR labels and approvals
+        if: ${{ github.event_name == 'pull_request_target' }}
         env:
           TARGET_REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-pr-label-policy.mjs
+
+      - name: Rerun authoritative Label Test
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
+          REVIEW_SIGNAL_HEAD_SHA: ${{ inputs.review_signal_head_sha }}
+        run: node scripts/rerun-label-policy.mjs
