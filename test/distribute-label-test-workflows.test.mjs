@@ -653,6 +653,8 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
 
   assert.match(workflow, /name: Label Test/);
   assert.match(workflow, /pull_request_target:/);
+  assert.match(workflow, /workflow_run:/);
+  assert.match(workflow, /workflows:\s*\n\s*- Label Test Review Refresh/);
   assert.doesNotMatch(workflow, /pull_request_review:/);
   assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
@@ -662,10 +664,10 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   // file is a reason the distributed callers would need updating again later.
   assert.doesNotMatch(workflow, /target_repository:/);
   assert.doesNotMatch(workflow, /pull_request_number:/);
-  assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 2);
+  assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 4);
 });
 
-test("generateCallerWorkflows emits one policy workflow and one review refresh workflow", () => {
+test("generateCallerWorkflows emits one policy workflow and one unprivileged review signal workflow", () => {
   const workflows = generateCallerWorkflows({
     sourceRepository: "fork-owner/Label-Sync",
     sourceRef: "main",
@@ -679,17 +681,20 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
 
   const policy = byPath.get(".github/workflows/label-test.yml");
   assert.match(policy, /pull_request_target:/);
+  assert.match(policy, /workflow_run:/);
   assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(policy, /secrets: inherit/);
-  // The policy workflow must publish exactly one check, so it carries a single job
-  // and reacts to a single event. A second trigger would create a second check
-  // suite, and a job-level `if` would publish a permanently skipped check.
-  assert.doesNotMatch(policy, /workflow_run:/);
   assert.doesNotMatch(policy, /pull_request_review:/);
-  assert.doesNotMatch(policy, /^\s*if:/m);
-  assert.doesNotMatch(policy, /name: Refresh Label Test/);
-  assert.doesNotMatch(policy, /actions:\s*write/);
-  assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
+  assert.match(policy, /label-test:\s*\n\s*if:\s*\$\{\{ github\.event_name == 'pull_request_target' \}\}/);
+  assert.match(policy, /refresh-label-test:\s*\n\s*name: Refresh Label Test/);
+  assert.match(policy, /github\.event_name == 'workflow_run'/);
+  assert.match(policy, /github\.event\.workflow_run\.event == 'pull_request_review'/);
+  assert.match(policy, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(policy, /actions:\s*write/);
+  assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
+  assert.match(policy, /review_signal_run_id:\s*\$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(policy, /review_signal_head_sha:\s*\$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
+  assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 2);
   // Permission headroom: the caller caps what the reusable workflow can ever be granted,
   // so it is deliberately wider than what the reusable workflow uses today. An unused
   // permission costs nothing, and narrowing these would mean redistributing to every
@@ -712,6 +717,7 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
     "labeled",
     "unlabeled",
     "ready_for_review",
+    "completed",
   ]);
 
   const refresh = byPath.get(".github/workflows/label-test-review-refresh.yml");
@@ -720,15 +726,17 @@ test("generateCallerWorkflows emits one policy workflow and one review refresh w
   assert.match(refresh, /- submitted/);
   assert.match(refresh, /- edited/);
   assert.match(refresh, /- dismissed/);
-  assert.match(refresh, /name: Refresh Label Test/);
-  assert.match(refresh, /actions:\s*write/);
-  assert.match(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
-  assert.match(refresh, /secrets: inherit/);
+  assert.match(refresh, /name: Record Label Test Review/);
+  assert.match(refresh, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(refresh, /uses: actions\/upload-artifact@v7/);
+  assert.match(refresh, /name: label-test-review-context/);
+  assert.doesNotMatch(refresh, /actions:\s*write/);
+  assert.doesNotMatch(refresh, /secrets: inherit/);
+  assert.doesNotMatch(refresh, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
   assert.doesNotMatch(refresh, /target_repository:/);
   assert.doesNotMatch(refresh, /pull_request_number:/);
-  // The artifact handshake is gone; the PR number comes straight from the event payload.
-  assert.doesNotMatch(refresh, /upload-artifact/);
-  assert.doesNotMatch(refresh, /label-test-review-context/);
+  assert.match(refresh, /upload-artifact/);
+  assert.match(refresh, /label-test-review-context/);
   assert.doesNotMatch(refresh, /workflow_run:/);
 });
 

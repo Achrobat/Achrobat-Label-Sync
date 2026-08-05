@@ -6,6 +6,7 @@ const DEFAULT_MAX_PAGES = 5;
 
 export const LABEL_TEST_RUN_NOT_FOUND = "LABEL_TEST_RUN_NOT_FOUND";
 export const LABEL_TEST_RUN_PENDING = "LABEL_TEST_RUN_PENDING";
+export const REVIEW_SIGNAL_MISMATCH = "REVIEW_SIGNAL_MISMATCH";
 
 function parsePullRequestNumber(value) {
   const pullRequestNumber = Number(value);
@@ -209,6 +210,58 @@ export async function rerunLabelTestForPullRequest({
   return selectedRun;
 }
 
+export async function rerunLabelTestForReviewSignal({
+  token,
+  repository,
+  pullRequestNumber: pullRequestNumberValue,
+  expectedHeadSha: expectedHeadShaValue,
+  workflowPath = "label-test.yml",
+  maxPages = DEFAULT_MAX_PAGES,
+  request = githubRequest,
+}) {
+  if (!token) {
+    throw new Error("LABEL_SYNC_TOKEN or GITHUB_TOKEN is required.");
+  }
+
+  if (typeof repository !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repository)) {
+    throw new Error("TARGET_REPOSITORY must match owner/repo.");
+  }
+
+  const pullRequestNumber = parsePullRequestNumber(pullRequestNumberValue);
+  const expectedHeadSha = optionalString(expectedHeadShaValue);
+
+  if (expectedHeadSha === null) {
+    throw new Error("REVIEW_SIGNAL_HEAD_SHA is required.");
+  }
+
+  const pullRequest = await request(
+    token,
+    "GET",
+    `/repos/${repository}/pulls/${pullRequestNumber}`,
+  );
+  const actualHeadSha = optionalString(pullRequest?.head?.sha);
+
+  if (pullRequest?.number !== pullRequestNumber || actualHeadSha !== expectedHeadSha) {
+    const error = new Error(
+      `Pull request #${pullRequestNumber} does not match triggering workflow head ${expectedHeadSha}.`,
+    );
+    error.code = REVIEW_SIGNAL_MISMATCH;
+    throw error;
+  }
+
+  return rerunLabelTestForPullRequest({
+    token,
+    repository,
+    pullRequestNumber,
+    headSha: actualHeadSha,
+    headRef: pullRequest?.head?.ref,
+    headRepository: pullRequest?.head?.repo?.full_name,
+    workflowPath,
+    maxPages,
+    request,
+  });
+}
+
 async function readPullRequestNumber() {
   if (process.env.PULL_REQUEST_NUMBER) {
     return process.env.PULL_REQUEST_NUMBER;
@@ -222,22 +275,38 @@ async function readPullRequestNumber() {
 }
 
 async function main() {
-  const run = await rerunLabelTestForPullRequest({
-    token: process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN,
-    repository: process.env.TARGET_REPOSITORY,
-    pullRequestNumber: await readPullRequestNumber(),
-    headSha: process.env.PULL_REQUEST_HEAD_SHA,
-    headRef: process.env.PULL_REQUEST_HEAD_REF,
-    headRepository: process.env.PULL_REQUEST_HEAD_REPOSITORY,
-    workflowPath: process.env.LABEL_TEST_WORKFLOW_PATH,
-  });
+  const token = process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
+  const repository = process.env.TARGET_REPOSITORY;
+  const pullRequestNumber = await readPullRequestNumber();
+  const workflowPath = process.env.LABEL_TEST_WORKFLOW_PATH;
+  const run = process.env.REVIEW_SIGNAL_HEAD_SHA
+    ? await rerunLabelTestForReviewSignal({
+      token,
+      repository,
+      pullRequestNumber,
+      expectedHeadSha: process.env.REVIEW_SIGNAL_HEAD_SHA,
+      workflowPath,
+    })
+    : await rerunLabelTestForPullRequest({
+      token,
+      repository,
+      pullRequestNumber,
+      headSha: process.env.PULL_REQUEST_HEAD_SHA,
+      headRef: process.env.PULL_REQUEST_HEAD_REF,
+      headRepository: process.env.PULL_REQUEST_HEAD_REPOSITORY,
+      workflowPath,
+    });
 
   console.log(`Requested rerun of Label Test workflow run ${run.id}.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    if (error.code === LABEL_TEST_RUN_NOT_FOUND || error.code === LABEL_TEST_RUN_PENDING) {
+    if (
+      error.code === LABEL_TEST_RUN_NOT_FOUND
+      || error.code === LABEL_TEST_RUN_PENDING
+      || error.code === REVIEW_SIGNAL_MISMATCH
+    ) {
       console.log(`${error.message} Nothing to refresh; skipping.`);
       return;
     }
