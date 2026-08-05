@@ -153,7 +153,7 @@ export async function rerunLabelTestForPullRequest({
   request = githubRequest,
 }) {
   if (!token) {
-    throw new Error("GITHUB_TOKEN is required.");
+    throw new Error("LABEL_SYNC_TOKEN or GITHUB_TOKEN is required.");
   }
 
   if (typeof repository !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repository)) {
@@ -223,7 +223,7 @@ async function readPullRequestNumber() {
 
 async function main() {
   const run = await rerunLabelTestForPullRequest({
-    token: process.env.GITHUB_TOKEN,
+    token: process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN,
     repository: process.env.TARGET_REPOSITORY,
     pullRequestNumber: await readPullRequestNumber(),
     headSha: process.env.PULL_REQUEST_HEAD_SHA,
