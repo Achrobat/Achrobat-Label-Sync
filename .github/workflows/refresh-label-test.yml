@@ -11,9 +11,18 @@ on:
         description: "Ref to check out from the central Label Sync repository."
         required: true
         type: string
+      review_signal_run_id:
+        description: "Unprivileged review workflow run containing the pull request number artifact."
+        required: true
+        type: number
+      review_signal_head_sha:
+        description: "Pull request head SHA recorded by GitHub for the review workflow run."
+        required: true
+        type: string
 
-# The repository and pull request are read from the caller's context rather than passed
-# as inputs. See the equivalent note in label-test.yml.
+# The target repository comes from the caller's trusted workflow_run context. The pull
+# request number crosses the privilege boundary as untrusted artifact data and is checked
+# against review_signal_head_sha before the workflow uses elevated credentials.
 
 permissions:
   actions: write
@@ -24,6 +33,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Download review context
+        uses: actions/download-artifact@v8
+        with:
+          name: label-test-review-context
+          path: ${{ runner.temp }}/label-test-review-context
+          run-id: ${{ inputs.review_signal_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Check out Label Sync repository
         uses: actions/checkout@v7
         with:
@@ -64,8 +81,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
-          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PULL_REQUEST_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PULL_REQUEST_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
+          REVIEW_SIGNAL_HEAD_SHA: ${{ inputs.review_signal_head_sha }}
         run: node scripts/rerun-label-policy.mjs

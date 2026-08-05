@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   LABEL_TEST_RUN_NOT_FOUND,
   LABEL_TEST_RUN_PENDING,
+  REVIEW_SIGNAL_MISMATCH,
   rerunLabelTestForPullRequest,
+  rerunLabelTestForReviewSignal,
   selectLatestCompletedLabelTestRun,
   selectLatestPendingLabelTestRun,
 } from "../scripts/rerun-label-policy.mjs";
@@ -341,4 +343,81 @@ test("rerunLabelTestForPullRequest reports an in-flight run separately from a mi
       return true;
     },
   );
+});
+
+test("rerunLabelTestForReviewSignal validates the artifact PR against the triggering head before rerunning", async () => {
+  const calls = [];
+  const request = async (_token, method, apiPath) => {
+    calls.push({ method, apiPath });
+
+    if (apiPath === "/repos/example/repository/pulls/42") {
+      return {
+        number: 42,
+        state: "open",
+        head: {
+          sha: FORK_HEAD.headSha,
+          ref: FORK_HEAD.headRef,
+          repo: { full_name: FORK_HEAD.headRepository },
+        },
+        base: { repo: { full_name: "example/repository" } },
+      };
+    }
+
+    if (method === "GET") {
+      return { workflow_runs: [forkRun({ id: 905 })] };
+    }
+
+    return null;
+  };
+
+  const run = await rerunLabelTestForReviewSignal({
+    token: "token-value",
+    repository: "example/repository",
+    pullRequestNumber: 42,
+    expectedHeadSha: FORK_HEAD.headSha,
+    request,
+  });
+
+  assert.equal(run.id, 905);
+  assert.deepEqual(calls.map(({ method, apiPath }) => `${method} ${apiPath}`), [
+    "GET /repos/example/repository/pulls/42",
+    "GET /repos/example/repository/actions/workflows/label-test.yml/runs?event=pull_request_target&per_page=100&page=1",
+    "POST /repos/example/repository/actions/runs/905/rerun",
+  ]);
+});
+
+test("rerunLabelTestForReviewSignal rejects a tampered PR artifact before querying workflow runs", async () => {
+  const calls = [];
+  const request = async (_token, method, apiPath) => {
+    calls.push({ method, apiPath });
+    return {
+      number: 7,
+      state: "open",
+      head: {
+        sha: "1111111111111111111111111111111111111111",
+        ref: "unrelated",
+        repo: { full_name: "attacker/fork" },
+      },
+      base: { repo: { full_name: "example/repository" } },
+    };
+  };
+
+  await assert.rejects(
+    () => rerunLabelTestForReviewSignal({
+      token: "token-value",
+      repository: "example/repository",
+      pullRequestNumber: 7,
+      expectedHeadSha: FORK_HEAD.headSha,
+      request,
+    }),
+    (error) => {
+      assert.equal(error.code, REVIEW_SIGNAL_MISMATCH);
+      assert.match(error.message, /does not match triggering workflow head/);
+      return true;
+    },
+  );
+
+  assert.deepEqual(calls, [
+    { method: "GET", apiPath: "/repos/example/repository/pulls/7" },
+  ]);
 });
