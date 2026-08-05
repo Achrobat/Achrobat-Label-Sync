@@ -192,9 +192,9 @@ Behavior:
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 
-The policy check runs on `pull_request_target` only, so it publishes exactly one check. Review submissions, edits, and dismissals do not create a second policy check. Instead, a separate review-refresh workflow reruns the latest completed policy run for that pull request, letting a new approval replace an earlier failed result on the same check.
+The policy job runs on `pull_request_target` only. Review submissions, edits, and dismissals are recorded by a separate unprivileged workflow, then the existing Label Test workflow handles its completion through `workflow_run` and reruns the latest completed policy run for that pull request. This lets a new approval replace an earlier failed result on the same required check.
 
-`pull_request_review` always executes from the target repository's default branch, the pull request number comes from GitHub's event payload rather than contributor-controlled data, and the refresh job never checks out pull request code. It only calls the Actions rerun API, so granting it `actions: write` is safe for fork pull requests.
+Fork `pull_request_review` runs cannot access repository secrets or an `actions: write` token. The review workflow therefore only uploads the pull request number as a short-lived artifact. Its `workflow_run` continuation executes from the target repository's default branch with the configured authentication, downloads the artifact outside the workspace, and verifies the referenced pull request still has the head SHA recorded by GitHub for the review run before calling the Actions rerun API. Neither stage checks out or executes pull request code.
 
 A pull request shows one check until someone submits a review, and two afterwards. The refresh workflow reacts to every review regardless of labels, because GitHub cannot filter a workflow trigger by pull request label, and narrowing it with a job-level condition would publish a permanently skipped check instead. Reducing this to a single check in all cases would require a GitHub App posting a check run through the Checks API rather than distributed workflows.
 
@@ -202,10 +202,10 @@ A pull request shows one check until someone submits a review, and two afterward
 
 Run `05 - Distribute-Label-Workflow` manually to install or update the Label Test workflows in selected repositories. It writes these files in each selected target repository:
 
-- `.github/workflows/label-test.yml`: the single required policy check, on `pull_request_target`
-- `.github/workflows/label-test-review-refresh.yml`: reruns the policy check after a review
+- `.github/workflows/label-test.yml`: the required policy check on `pull_request_target` and its privileged `workflow_run` continuation
+- `.github/workflows/label-test-review-refresh.yml`: records review context without secrets for the privileged continuation
 
-The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` file if a target received the earlier artifact-handshake layout. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` filename if a target received that earlier layout; the signal now lives at `.github/workflows/label-test-review-refresh.yml`. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 

@@ -127,6 +127,11 @@ on:
       - labeled
       - unlabeled
       - ready_for_review
+  workflow_run:
+    workflows:
+      - Label Test Review Refresh
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -134,6 +139,7 @@ permissions:
 jobs:
   label-test:
     permissions:
+      actions: read
       contents: read
       checks: write
       issues: write
@@ -143,6 +149,8 @@ jobs:
     with:
       label_sync_repository: ${sourceRepository}
       label_sync_ref: ${sourceRef}
+      review_signal_run_id: \${{ github.event.workflow_run.id || 0 }}
+      review_signal_head_sha: \${{ github.event.workflow_run.head_sha || '' }}
     secrets: inherit
 `;
 }
@@ -164,18 +172,25 @@ permissions:
   contents: read
 
 jobs:
-  refresh-label-test:
-    name: Refresh Label Test
-    permissions:
-      actions: write
-      contents: read
-      checks: write
-      pull-requests: read
-    uses: ${sourceRepository}/.github/workflows/refresh-label-test.yml@${sourceRef}
-    with:
-      label_sync_repository: ${sourceRepository}
-      label_sync_ref: ${sourceRef}
-    secrets: inherit
+  record-label-test-review:
+    name: Record Label Test Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Record pull request number
+        env:
+          PULL_REQUEST_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/label-test-review-context"
+          printf '%s\\n' "$PULL_REQUEST_NUMBER" > "$RUNNER_TEMP/label-test-review-context/pr-number.txt"
+
+      - name: Upload review context
+        uses: actions/upload-artifact@v7
+        with:
+          name: label-test-review-context
+          path: \${{ runner.temp }}/label-test-review-context/pr-number.txt
+          if-no-files-found: error
+          retention-days: 1
 `;
 }
 

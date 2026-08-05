@@ -49,7 +49,7 @@ test("workflows use the current stable Node.js action stack", async () => {
   assert.ok(nodeVersionCount > 0, "expected at least one explicit Node.js version");
 });
 
-test("review refresh workflow takes the pull request number directly and reruns the authoritative label test", async () => {
+test("review refresh workflow downloads the unprivileged review signal before rerunning the authoritative label test", async () => {
   const workflow = await fs.readFile(
     path.join(workflowsDirectory, "refresh-label-test.yml"),
     "utf8",
@@ -57,35 +57,48 @@ test("review refresh workflow takes the pull request number directly and reruns 
 
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /actions:\s*write/);
+  assert.match(workflow, /review_signal_run_id:/);
+  assert.match(workflow, /review_signal_head_sha:/);
+  assert.match(workflow, /uses:\s*actions\/download-artifact@v8/);
+  assert.match(workflow, /name:\s*label-test-review-context/);
+  assert.match(workflow, /run-id:\s*\$\{\{ inputs\.review_signal_run_id \}\}/);
+  assert.match(workflow, /github-token:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /uses:\s*actions\/checkout@v7/);
   assert.match(workflow, /uses:\s*actions\/setup-node@v6/);
   assert.match(workflow, /node-version:\s*"24"/);
-  // Derived from the caller's context rather than passed in, so the distributed caller
-  // workflows do not have to change when this workflow does.
-  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER_FILE:\s*\$\{\{ runner\.temp \}\}\/label-test-review-context\/pr-number\.txt/);
+  assert.match(workflow, /REVIEW_SIGNAL_HEAD_SHA:\s*\$\{\{ inputs\.review_signal_head_sha \}\}/);
   assert.match(workflow, /TARGET_REPOSITORY:\s*\$\{\{ github\.repository \}\}/);
   assert.doesNotMatch(workflow, /inputs\.pull_request_number/);
   assert.doesNotMatch(workflow, /inputs\.target_repository/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /run:\s*node scripts\/rerun-label-policy\.mjs/);
 
-  // The artifact handshake is gone. The PR number arrives in the trusted
-  // pull_request_review event payload, so no run artifact is downloaded.
-  assert.doesNotMatch(workflow, /download-artifact/);
-  assert.doesNotMatch(workflow, /label-test-review-context/);
-  assert.doesNotMatch(workflow, /review_signal_run_id/);
+  assert.doesNotMatch(workflow, /github\.event\.pull_request/);
 });
 
-test("the distributed policy workflow is the only required label test check", async () => {
+test("the reusable label test routes policy and refresh events inside one job", async () => {
   const workflow = await fs.readFile(
     path.join(workflowsDirectory, "label-test.yml"),
     "utf8",
   );
 
   assert.match(workflow, /workflow_call:/);
-  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
-  assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
+  assert.match(workflow, /review_signal_run_id:/);
+  assert.match(workflow, /review_signal_head_sha:/);
+  assert.match(workflow, /actions:\s*read/);
   assert.doesNotMatch(workflow, /actions:\s*write/);
+  assert.match(workflow, /jobs:\s*\n\s*label-test:\s*\n\s*runs-on:/);
+  assert.equal(workflow.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
+  assert.match(workflow, /name: Download review context\s*\n\s*if:\s*\$\{\{ github\.event_name == 'workflow_run' \}\}/);
+  assert.match(workflow, /uses:\s*actions\/download-artifact@v8/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /name: Check PR labels and approvals\s*\n\s*if:\s*\$\{\{ github\.event_name == 'pull_request_target' \}\}/);
+  assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
+  assert.match(workflow, /name: Rerun authoritative Label Test\s*\n\s*if:\s*\$\{\{ github\.event_name == 'workflow_run' \}\}/);
+  assert.match(workflow, /PULL_REQUEST_NUMBER_FILE:\s*\$\{\{ runner\.temp \}\}\/label-test-review-context\/pr-number\.txt/);
+  assert.match(workflow, /REVIEW_SIGNAL_HEAD_SHA:\s*\$\{\{ inputs\.review_signal_head_sha \}\}/);
+  assert.match(workflow, /run:\s*node scripts\/rerun-label-policy\.mjs/);
   assert.doesNotMatch(workflow, /inputs\.pull_request_number/);
   assert.doesNotMatch(workflow, /inputs\.target_repository/);
 });
