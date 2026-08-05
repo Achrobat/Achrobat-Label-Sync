@@ -659,15 +659,17 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.match(workflow, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(workflow, /label_sync_repository: fork-owner\/Label-Sync/);
   assert.match(workflow, /label_sync_ref: main/);
+  assert.match(workflow, /review_signal_run_id:\s*\$\{\{ github\.event\.workflow_run\.id \|\| 0 \}\}/);
+  assert.match(workflow, /review_signal_head_sha:\s*\$\{\{ github\.event\.workflow_run\.head_sha \|\| '' \}\}/);
   // The repository and pull request are read from the caller's context inside the
   // reusable workflow, so they must not reappear as inputs here. Every input in this
   // file is a reason the distributed callers would need updating again later.
   assert.doesNotMatch(workflow, /target_repository:/);
   assert.doesNotMatch(workflow, /pull_request_number:/);
-  assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 4);
+  assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 2);
 });
 
-test("generateCallerWorkflows emits one policy workflow and one unprivileged review signal workflow", () => {
+test("generateCallerWorkflows emits one dispatcher job and one unprivileged review signal workflow", () => {
   const workflows = generateCallerWorkflows({
     sourceRepository: "fork-owner/Label-Sync",
     sourceRef: "main",
@@ -685,16 +687,15 @@ test("generateCallerWorkflows emits one policy workflow and one unprivileged rev
   assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test\.yml@main/);
   assert.match(policy, /secrets: inherit/);
   assert.doesNotMatch(policy, /pull_request_review:/);
-  assert.match(policy, /label-test:\s*\n\s*if:\s*\$\{\{ github\.event_name == 'pull_request_target' \}\}/);
-  assert.match(policy, /refresh-label-test:\s*\n\s*name: Refresh Label Test/);
-  assert.match(policy, /github\.event_name == 'workflow_run'/);
-  assert.match(policy, /github\.event\.workflow_run\.event == 'pull_request_review'/);
-  assert.match(policy, /github\.event\.workflow_run\.conclusion == 'success'/);
-  assert.match(policy, /actions:\s*write/);
-  assert.match(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
-  assert.match(policy, /review_signal_run_id:\s*\$\{\{ github\.event\.workflow_run\.id \}\}/);
-  assert.match(policy, /review_signal_head_sha:\s*\$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
-  assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 2);
+  assert.match(policy, /label-test:\s*\n\s*permissions:/);
+  assert.doesNotMatch(policy, /^\s{4}if:/m);
+  assert.doesNotMatch(policy, /^ {2}refresh-label-test:/m);
+  assert.doesNotMatch(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
+  assert.match(policy, /actions:\s*read/);
+  assert.doesNotMatch(policy, /actions:\s*write/);
+  assert.match(policy, /review_signal_run_id:\s*\$\{\{ github\.event\.workflow_run\.id \|\| 0 \}\}/);
+  assert.match(policy, /review_signal_head_sha:\s*\$\{\{ github\.event\.workflow_run\.head_sha \|\| '' \}\}/);
+  assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
   // Permission headroom: the caller caps what the reusable workflow can ever be granted,
   // so it is deliberately wider than what the reusable workflow uses today. An unused
   // permission costs nothing, and narrowing these would mean redistributing to every
