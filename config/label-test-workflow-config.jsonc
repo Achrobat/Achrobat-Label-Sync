@@ -35,6 +35,9 @@
     //   "requiredLabels": ["Repo Feature"],
     //   "failingLabels": ["Repo: Do Not Merge"]
     // }
+    "Achrobat/PTR-76": {
+      "requiredLabels": ["Zen"]
+    }
   },
 
   // If a listed label is present on a PR, at least one listed user or team member for that label must have
