@@ -109,6 +109,15 @@ const configDefaults = {
     // "Do Not Merge"
   ],
 
+  // Add required or failing labels that apply only to one repository. Repository keys must use the
+  // full "owner/repository" name. These lists are added to the organization-wide lists above.
+  "repositoryLabels": {
+    // "your-org-name/special-repo": {
+    //   "requiredLabels": ["Repo Feature"],
+    //   "failingLabels": ["Repo: Do Not Merge"]
+    // }
+  },
+
   // If a listed label is present on a PR, at least one listed user or team member for that label must have
   // latest effective review state APPROVED.
   "protectedLabelApprovals": [

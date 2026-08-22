@@ -169,6 +169,12 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // "Blocked",
     // "Do Not Merge"
   ],
+  "repositoryLabels": {
+    // "your-org-name/special-repo": {
+    //   "requiredLabels": ["Repo Feature"],
+    //   "failingLabels": ["Repo: Do Not Merge"]
+    // }
+  },
   "protectedLabelApprovals": [
     // { "label": "Affects Balance", "approver": "teams/admin" },
     // { "label": "Affects Balance", "approver": "UltraProdigy" }
@@ -185,10 +191,14 @@ Behavior:
 - If `requiredLabels` is empty, the required-label gate is disabled and the check can pass with any labels or no labels.
 - If `requiredLabels` has entries, a PR must have at least one matching label.
 - Any matching `failingLabels` entry fails the check.
+- `repositoryLabels` keys must use the full, case-insensitive `owner/repository` name. Their required and failing labels are added to the organization-wide lists only for that repository.
+- A repository-specific required label enables the required-label gate for that repository even when the organization-wide `requiredLabels` list is empty.
 - Failing labels override required labels.
 - If a protected label is present, at least one configured approver for that label must have latest effective review state `APPROVED`.
 - Plain approvers such as `UltraProdigy` are GitHub users.
 - Approvers prefixed with `teams/`, such as `teams/admin`, are GitHub team slugs in the configured organization.
+
+Repository-specific rules are resolved centrally from the calling workflow's existing `github.repository` context. Adding or changing these rules does not require changes to the caller workflows.
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
 

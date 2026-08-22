@@ -10,6 +10,7 @@ const emptyConfig = {
   requiredLabels: [],
   failingLabels: [],
   protectedLabelApprovals: [],
+  repositoryLabels: new Map(),
 };
 
 test("evaluatePrLabelTest passes when required labels are empty and no blocking rules match", async () => {
@@ -57,6 +58,72 @@ test("evaluatePrLabelTest lets failing labels override matching required labels"
   assert.deepEqual(result.failures, [
     'PR has failing label "Blocked".',
   ]);
+});
+
+test("evaluatePrLabelTest accepts a repository-specific required label", async () => {
+  const result = await evaluatePrLabelTest({
+    config: {
+      ...emptyConfig,
+      requiredLabels: ["Bug"],
+      repositoryLabels: new Map([
+        ["example/special-repo", {
+          requiredLabels: ["Repo Feature"],
+          failingLabels: [],
+        }],
+      ]),
+    },
+    targetRepository: "example/special-repo",
+    prLabels: [{ name: "Repo Feature" }],
+    reviews: [],
+    isTeamMember: async () => false,
+  });
+
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.failures, []);
+});
+
+test("evaluatePrLabelTest rejects a repository-specific failing label", async () => {
+  const result = await evaluatePrLabelTest({
+    config: {
+      ...emptyConfig,
+      repositoryLabels: new Map([
+        ["example/special-repo", {
+          requiredLabels: [],
+          failingLabels: ["Repo: Do Not Merge"],
+        }],
+      ]),
+    },
+    targetRepository: "EXAMPLE/SPECIAL-REPO",
+    prLabels: [{ name: "Repo: Do Not Merge" }],
+    reviews: [],
+    isTeamMember: async () => false,
+  });
+
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.failures, [
+    'PR has failing label "Repo: Do Not Merge".',
+  ]);
+});
+
+test("evaluatePrLabelTest ignores label rules configured for another repository", async () => {
+  const result = await evaluatePrLabelTest({
+    config: {
+      ...emptyConfig,
+      repositoryLabels: new Map([
+        ["example/special-repo", {
+          requiredLabels: ["Repo Feature"],
+          failingLabels: ["Repo: Do Not Merge"],
+        }],
+      ]),
+    },
+    targetRepository: "example/ordinary-repo",
+    prLabels: [{ name: "Repo: Do Not Merge" }],
+    reviews: [],
+    isTeamMember: async () => false,
+  });
+
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.failures, []);
 });
 
 test("evaluatePrLabelTest accepts a protected label approval from a configured user", async () => {

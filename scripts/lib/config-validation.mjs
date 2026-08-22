@@ -365,6 +365,43 @@ function validateLabelNameEntries(entries, configKey) {
   });
 }
 
+function validateRepositoryLabelEntries(repositoryLabels) {
+  assert(
+    repositoryLabels && typeof repositoryLabels === "object" && !Array.isArray(repositoryLabels),
+    'config/label-test-workflow-config.jsonc field "repositoryLabels" must contain an object.',
+  );
+
+  const validated = new Map();
+
+  for (const [repositoryName, rules] of Object.entries(repositoryLabels)) {
+    const name = repositoryName.trim();
+    assert(
+      isFullRepositoryName(name),
+      `repositoryLabels key "${repositoryName}" must be an "owner/repository" name.`,
+    );
+
+    const key = normalizeRepositoryRef(name);
+    assert(!validated.has(key), `Duplicate repositoryLabels key detected: "${repositoryName}".`);
+    assert(
+      rules && typeof rules === "object" && !Array.isArray(rules),
+      `repositoryLabels entry "${repositoryName}" must contain an object.`,
+    );
+
+    validated.set(key, {
+      requiredLabels: validateLabelNameEntries(
+        rules.requiredLabels ?? [],
+        `repositoryLabels.${repositoryName}.requiredLabels`,
+      ),
+      failingLabels: validateLabelNameEntries(
+        rules.failingLabels ?? [],
+        `repositoryLabels.${repositoryName}.failingLabels`,
+      ),
+    });
+  }
+
+  return validated;
+}
+
 function validateProtectedLabelApprover(value) {
   assert(typeof value === "string" && value.trim(), "protectedLabelApprovals approver must be a non-empty string.");
 
@@ -441,6 +478,7 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   return {
     requiredLabels: validateLabelNameEntries(labelTestWorkflowConfig.requiredLabels ?? [], "requiredLabels"),
     failingLabels: validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels"),
+    repositoryLabels: validateRepositoryLabelEntries(labelTestWorkflowConfig.repositoryLabels ?? {}),
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
     workflowDistribution: {
       whitelist: validateRepositoryEntries(

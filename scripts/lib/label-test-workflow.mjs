@@ -1,4 +1,4 @@
-import { normalizeName } from "./config-utils.mjs";
+import { normalizeName, normalizeRepositoryRef } from "./config-utils.mjs";
 
 function labelNames(labels) {
   return new Map(
@@ -91,14 +91,24 @@ async function hasAcceptedProtectedApproval(approvers, approvedReviews, isTeamMe
 
 export async function evaluatePrLabelTest({
   config,
+  targetRepository,
   prLabels,
   reviews,
   isTeamMember,
 }) {
   const failures = [];
   const presentLabels = labelNames(prLabels);
-  const requiredLabels = config.requiredLabels ?? [];
-  const failingLabels = config.failingLabels ?? [];
+  const repositoryRules = targetRepository
+    ? config.repositoryLabels?.get(normalizeRepositoryRef(targetRepository))
+    : undefined;
+  const requiredLabels = [
+    ...(config.requiredLabels ?? []),
+    ...(repositoryRules?.requiredLabels ?? []),
+  ];
+  const failingLabels = [
+    ...(config.failingLabels ?? []),
+    ...(repositoryRules?.failingLabels ?? []),
+  ];
   const protectedLabelApprovals = config.protectedLabelApprovals ?? [];
 
   if (

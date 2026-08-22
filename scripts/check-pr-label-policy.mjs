@@ -126,6 +126,7 @@ async function main() {
   const reviews = await getPullRequestReviews(token, targetRepository, pullRequestNumber);
   const result = await evaluatePrLabelTest({
     config,
+    targetRepository,
     prLabels: labels,
     reviews,
     isTeamMember: createTeamMembershipChecker(token, properties.organization),

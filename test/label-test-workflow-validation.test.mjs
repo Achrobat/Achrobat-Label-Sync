@@ -7,6 +7,12 @@ test("validateLabelTestWorkflowConfig accepts empty required labels", () => {
   const config = validateLabelTestWorkflowConfig({
     requiredLabels: [],
     failingLabels: ["Blocked"],
+    repositoryLabels: {
+      "Example-Org/Special-Repo": {
+        requiredLabels: [" Repo Feature "],
+        failingLabels: ["Repo: Do Not Merge"],
+      },
+    },
     protectedLabelApprovals: [
       { label: "Affects Balance", approver: "teams/admin" },
       { label: "Affects Balance", approver: "UltraProdigy" },
@@ -19,12 +25,52 @@ test("validateLabelTestWorkflowConfig accepts empty required labels", () => {
 
   assert.deepEqual(config.requiredLabels, []);
   assert.deepEqual(config.failingLabels, ["Blocked"]);
+  assert.deepEqual(config.repositoryLabels, new Map([
+    ["example-org/special-repo", {
+      requiredLabels: ["Repo Feature"],
+      failingLabels: ["Repo: Do Not Merge"],
+    }],
+  ]));
   assert.deepEqual(config.protectedLabelApprovals, [
     { label: "Affects Balance", approver: { type: "team", slug: "admin", value: "teams/admin" } },
     { label: "Affects Balance", approver: { type: "user", login: "UltraProdigy", value: "UltraProdigy" } },
   ]);
   assert.equal(config.workflowDistribution.whitelist.has("example-repo"), true);
   assert.equal(config.workflowDistribution.whitelist.has("example-org/other-repo"), true);
+});
+
+test("validateLabelTestWorkflowConfig requires full names for repository-specific labels", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      requiredLabels: [],
+      failingLabels: [],
+      repositoryLabels: {
+        "special-repo": {
+          requiredLabels: ["Repo Feature"],
+          failingLabels: [],
+        },
+      },
+      protectedLabelApprovals: [],
+      workflowDistribution: { whitelist: [], blacklist: [] },
+    }),
+    /repositoryLabels key "special-repo" must be an "owner\/repository" name\./,
+  );
+});
+
+test("validateLabelTestWorkflowConfig rejects duplicate normalized repository-specific keys", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      requiredLabels: [],
+      failingLabels: [],
+      repositoryLabels: {
+        "Example-Org/Special-Repo": { requiredLabels: [], failingLabels: [] },
+        "example-org/special-repo": { requiredLabels: [], failingLabels: [] },
+      },
+      protectedLabelApprovals: [],
+      workflowDistribution: { whitelist: [], blacklist: [] },
+    }),
+    /Duplicate repositoryLabels key detected: "example-org\/special-repo"\./,
+  );
 });
 
 test("validateLabelTestWorkflowConfig rejects duplicate required labels", () => {
