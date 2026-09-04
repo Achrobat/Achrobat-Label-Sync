@@ -57,9 +57,8 @@ async function getAllPages(token, apiPath) {
   }
 }
 
-async function getPullRequestLabels(token, repository, pullRequestNumber) {
-  const issue = await githubRequest(token, "GET", `/repos/${repository}/issues/${pullRequestNumber}`);
-  return Array.isArray(issue.labels) ? issue.labels : [];
+async function getPullRequestIssue(token, repository, pullRequestNumber) {
+  return githubRequest(token, "GET", `/repos/${repository}/issues/${pullRequestNumber}`);
 }
 
 async function getPullRequestReviews(token, repository, pullRequestNumber) {
@@ -122,11 +121,13 @@ async function main() {
   assert(targetRepository, "TARGET_REPOSITORY is required.");
   assert(pullRequestNumber && /^\d+$/.test(pullRequestNumber), "PULL_REQUEST_NUMBER must be a number.");
 
-  const labels = await getPullRequestLabels(token, targetRepository, pullRequestNumber);
+  const pullRequestIssue = await getPullRequestIssue(token, targetRepository, pullRequestNumber);
+  const labels = Array.isArray(pullRequestIssue.labels) ? pullRequestIssue.labels : [];
   const reviews = await getPullRequestReviews(token, targetRepository, pullRequestNumber);
   const result = await evaluatePrLabelTest({
     config,
     targetRepository,
+    pullRequestAuthor: pullRequestIssue?.user?.login,
     prLabels: labels,
     reviews,
     isTeamMember: createTeamMembershipChecker(token, properties.organization),

@@ -5,6 +5,7 @@ import {
   LABEL_TEST_RUN_NOT_FOUND,
   LABEL_TEST_RUN_PENDING,
   REVIEW_SIGNAL_MISMATCH,
+  LABEL_TEST_STATUS_CONTEXT,
   rerunLabelTestForPullRequest,
   rerunLabelTestForReviewSignal,
   selectLatestCompletedLabelTestRun,
@@ -384,6 +385,181 @@ test("rerunLabelTestForReviewSignal validates the artifact PR against the trigge
     "GET /repos/example/repository/actions/workflows/label-test.yml/runs?event=pull_request_target&per_page=100&page=1",
     "POST /repos/example/repository/actions/runs/905/rerun",
   ]);
+});
+
+test("rerunLabelTestForReviewSignal posts success for an ignored author when no authoritative run exists", async () => {
+  const calls = [];
+  const request = async (token, method, apiPath, body) => {
+    calls.push({ token, method, apiPath, body });
+
+    if (apiPath === "/repos/example/repository/pulls/42") {
+      return {
+        number: 42,
+        html_url: "https://github.com/example/repository/pull/42",
+        user: { login: "GitHub-Actions[bot]" },
+        head: {
+          sha: FORK_HEAD.headSha,
+          ref: FORK_HEAD.headRef,
+          repo: { full_name: FORK_HEAD.headRepository },
+        },
+      };
+    }
+
+    if (method === "GET") {
+      return { workflow_runs: [] };
+    }
+
+    return null;
+  };
+
+  const result = await rerunLabelTestForReviewSignal({
+    token: "app-token",
+    statusToken: "target-github-token",
+    repository: "example/repository",
+    pullRequestNumber: 42,
+    expectedHeadSha: FORK_HEAD.headSha,
+    ignoredPullRequestAuthors: ["github-actions[bot]"],
+    request,
+  });
+
+  assert.deepEqual(result, {
+    ignored: true,
+    author: "GitHub-Actions[bot]",
+    headSha: FORK_HEAD.headSha,
+  });
+  assert.deepEqual(calls.at(-1), {
+    token: "target-github-token",
+    method: "POST",
+    apiPath: `/repos/example/repository/statuses/${FORK_HEAD.headSha}`,
+    body: {
+      state: "success",
+      context: LABEL_TEST_STATUS_CONTEXT,
+      description: "Label Test skipped for ignored PR author GitHub-Actions[bot].",
+      target_url: "https://github.com/example/repository/pull/42",
+    },
+  });
+});
+
+test("rerunLabelTestForReviewSignal does not reuse an old run from an ignored author's reused branch", async () => {
+  const calls = [];
+  const request = async (token, method, apiPath, body) => {
+    calls.push({ token, method, apiPath, body });
+
+    if (apiPath === "/repos/example/repository/pulls/42") {
+      return {
+        number: 42,
+        html_url: "https://github.com/example/repository/pull/42",
+        user: { login: "github-actions[bot]" },
+        head: {
+          sha: FORK_HEAD.headSha,
+          ref: "quest-book-i18n/patch",
+          repo: { full_name: "example/repository" },
+        },
+      };
+    }
+
+    if (method === "GET") {
+      return {
+        workflow_runs: [forkRun({
+          id: 906,
+          head_sha: "1111111111111111111111111111111111111111",
+          head_branch: "quest-book-i18n/patch",
+          head_repository: { full_name: "example/repository" },
+          pull_requests: [{ number: 42 }],
+        })],
+      };
+    }
+
+    return null;
+  };
+
+  await rerunLabelTestForReviewSignal({
+    token: "app-token",
+    statusToken: "target-github-token",
+    repository: "example/repository",
+    pullRequestNumber: 42,
+    expectedHeadSha: FORK_HEAD.headSha,
+    ignoredPullRequestAuthors: ["github-actions[bot]"],
+    request,
+  });
+
+  assert.equal(calls.some(({ apiPath }) => apiPath === "/repos/example/repository/actions/runs/906/rerun"), false);
+  assert.equal(calls.at(-1).apiPath, `/repos/example/repository/statuses/${FORK_HEAD.headSha}`);
+});
+
+test("rerunLabelTestForReviewSignal ignores an old pending run linked to the same ignored-author PR", async () => {
+  const calls = [];
+  const request = async (token, method, apiPath, body) => {
+    calls.push({ token, method, apiPath, body });
+
+    if (apiPath === "/repos/example/repository/pulls/42") {
+      return {
+        number: 42,
+        user: { login: "github-actions[bot]" },
+        head: {
+          sha: FORK_HEAD.headSha,
+          ref: FORK_HEAD.headRef,
+          repo: { full_name: FORK_HEAD.headRepository },
+        },
+      };
+    }
+
+    if (method === "GET") {
+      return {
+        workflow_runs: [forkRun({
+          id: 907,
+          status: "in_progress",
+          head_sha: "2222222222222222222222222222222222222222",
+          pull_requests: [{ number: 42 }],
+        })],
+      };
+    }
+
+    return null;
+  };
+
+  await rerunLabelTestForReviewSignal({
+    token: "app-token",
+    statusToken: "target-github-token",
+    repository: "example/repository",
+    pullRequestNumber: 42,
+    expectedHeadSha: FORK_HEAD.headSha,
+    ignoredPullRequestAuthors: ["github-actions[bot]"],
+    request,
+  });
+
+  assert.equal(calls.at(-1).apiPath, `/repos/example/repository/statuses/${FORK_HEAD.headSha}`);
+});
+
+test("rerunLabelTestForReviewSignal keeps a missing run as a no-op for ordinary authors", async () => {
+  const request = async (_token, method, apiPath) => {
+    if (apiPath === "/repos/example/repository/pulls/42") {
+      return {
+        number: 42,
+        user: { login: "ordinary-user" },
+        head: {
+          sha: FORK_HEAD.headSha,
+          ref: FORK_HEAD.headRef,
+          repo: { full_name: FORK_HEAD.headRepository },
+        },
+      };
+    }
+
+    return method === "GET" ? { workflow_runs: [] } : null;
+  };
+
+  await assert.rejects(
+    () => rerunLabelTestForReviewSignal({
+      token: "app-token",
+      statusToken: "target-github-token",
+      repository: "example/repository",
+      pullRequestNumber: 42,
+      expectedHeadSha: FORK_HEAD.headSha,
+      ignoredPullRequestAuthors: ["github-actions[bot]"],
+      request,
+    }),
+    (error) => error.code === LABEL_TEST_RUN_NOT_FOUND,
+  );
 });
 
 test("rerunLabelTestForReviewSignal rejects a tampered PR artifact before querying workflow runs", async () => {

@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { normalizeName, readJsonc } from "./lib/config-utils.mjs";
+import { validateLabelTestWorkflowConfig } from "./lib/config-validation.mjs";
 
 const RUNS_PER_PAGE = 100;
 const DEFAULT_MAX_PAGES = 5;
@@ -7,6 +10,7 @@ const DEFAULT_MAX_PAGES = 5;
 export const LABEL_TEST_RUN_NOT_FOUND = "LABEL_TEST_RUN_NOT_FOUND";
 export const LABEL_TEST_RUN_PENDING = "LABEL_TEST_RUN_PENDING";
 export const REVIEW_SIGNAL_MISMATCH = "REVIEW_SIGNAL_MISMATCH";
+export const LABEL_TEST_STATUS_CONTEXT = "label-test / label-test";
 
 function parsePullRequestNumber(value) {
   const pullRequestNumber = Number(value);
@@ -60,7 +64,14 @@ function isLabelTestRun(run) {
   return run?.event === "pull_request_target";
 }
 
-function matchesExactly(run, criteria) {
+function matchesExactly(run, criteria, { requireHeadShaMatch = false } = {}) {
+  if (
+    requireHeadShaMatch
+    && (criteria.headSha === null || run.head_sha !== criteria.headSha)
+  ) {
+    return false;
+  }
+
   const linkedByNumber = Array.isArray(run.pull_requests)
     && run.pull_requests.some((pullRequest) => pullRequest?.number === criteria.pullRequestNumber);
 
@@ -87,15 +98,24 @@ function matchesByHeadBranch(run, criteria) {
     && runHeadRepository(run) === criteria.headRepository;
 }
 
-function selectRun(runs, criteriaValue, statusPredicate) {
+function selectRun(
+  runs,
+  criteriaValue,
+  statusPredicate,
+  { allowHeadBranchFallback = true, requireHeadShaMatch = false } = {},
+) {
   const criteria = parseRunMatchCriteria(criteriaValue);
   const candidates = runs
     .filter((run) => isLabelTestRun(run) && statusPredicate(run.status))
     .sort(newestFirst);
 
-  return candidates.find((run) => matchesExactly(run, criteria))
-    ?? candidates.find((run) => matchesByHeadBranch(run, criteria))
-    ?? null;
+  const exactMatch = candidates.find((run) => matchesExactly(run, criteria, { requireHeadShaMatch }));
+
+  if (exactMatch || !allowHeadBranchFallback) {
+    return exactMatch ?? null;
+  }
+
+  return candidates.find((run) => matchesByHeadBranch(run, criteria)) ?? null;
 }
 
 export function selectLatestCompletedLabelTestRun(runs, criteriaValue) {
@@ -106,7 +126,7 @@ export function selectLatestPendingLabelTestRun(runs, criteriaValue) {
   return selectRun(runs, criteriaValue, (status) => status !== "completed");
 }
 
-async function githubRequest(token, method, apiPath) {
+async function githubRequest(token, method, apiPath, body) {
   const response = await fetch(`https://api.github.com${apiPath}`, {
     method,
     headers: {
@@ -114,7 +134,9 @@ async function githubRequest(token, method, apiPath) {
       Authorization: `Bearer ${token}`,
       "User-Agent": "label-sync-review-refresh",
       "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
     },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -151,6 +173,8 @@ export async function rerunLabelTestForPullRequest({
   headRepository,
   workflowPath = "label-test.yml",
   maxPages = DEFAULT_MAX_PAGES,
+  allowHeadBranchFallback = true,
+  requireHeadShaMatch = false,
   request = githubRequest,
 }) {
   if (!token) {
@@ -181,7 +205,12 @@ export async function rerunLabelTestForPullRequest({
     const runs = Array.isArray(response?.workflow_runs) ? response.workflow_runs : [];
     collectedRuns.push(...runs);
 
-    selectedRun = selectLatestCompletedLabelTestRun(collectedRuns, criteria);
+    selectedRun = selectRun(
+      collectedRuns,
+      criteria,
+      (status) => status === "completed",
+      { allowHeadBranchFallback, requireHeadShaMatch },
+    );
 
     if (selectedRun || runs.length < RUNS_PER_PAGE) {
       break;
@@ -191,7 +220,12 @@ export async function rerunLabelTestForPullRequest({
   }
 
   if (!selectedRun) {
-    const pendingRun = selectLatestPendingLabelTestRun(collectedRuns, criteria);
+    const pendingRun = selectRun(
+      collectedRuns,
+      criteria,
+      (status) => status !== "completed",
+      { allowHeadBranchFallback, requireHeadShaMatch },
+    );
     const error = new Error(
       pendingRun
         ? `Label Test pull_request_target run ${pendingRun.id} for ${repository} pull request #${criteria.pullRequestNumber}${describeHead(criteria)} has not completed yet.`
@@ -212,11 +246,13 @@ export async function rerunLabelTestForPullRequest({
 
 export async function rerunLabelTestForReviewSignal({
   token,
+  statusToken,
   repository,
   pullRequestNumber: pullRequestNumberValue,
   expectedHeadSha: expectedHeadShaValue,
   workflowPath = "label-test.yml",
   maxPages = DEFAULT_MAX_PAGES,
+  ignoredPullRequestAuthors = [],
   request = githubRequest,
 }) {
   if (!token) {
@@ -249,17 +285,56 @@ export async function rerunLabelTestForReviewSignal({
     throw error;
   }
 
-  return rerunLabelTestForPullRequest({
-    token,
-    repository,
-    pullRequestNumber,
-    headSha: actualHeadSha,
-    headRef: pullRequest?.head?.ref,
-    headRepository: pullRequest?.head?.repo?.full_name,
-    workflowPath,
-    maxPages,
-    request,
-  });
+  try {
+    return await rerunLabelTestForPullRequest({
+      token,
+      repository,
+      pullRequestNumber,
+      headSha: actualHeadSha,
+      headRef: pullRequest?.head?.ref,
+      headRepository: pullRequest?.head?.repo?.full_name,
+      workflowPath,
+      maxPages,
+      allowHeadBranchFallback: false,
+      requireHeadShaMatch: true,
+      request,
+    });
+  } catch (error) {
+    const pullRequestAuthor = optionalString(pullRequest?.user?.login);
+    const ignoredAuthors = new Set(
+      ignoredPullRequestAuthors.map((author) => normalizeName(author)),
+    );
+
+    if (
+      error.code !== LABEL_TEST_RUN_NOT_FOUND
+      || pullRequestAuthor === null
+      || !ignoredAuthors.has(normalizeName(pullRequestAuthor))
+    ) {
+      throw error;
+    }
+
+    if (!statusToken) {
+      throw new Error("GITHUB_TOKEN is required to post an ignored-author Label Test status.");
+    }
+
+    await request(
+      statusToken,
+      "POST",
+      `/repos/${repository}/statuses/${actualHeadSha}`,
+      {
+        state: "success",
+        context: LABEL_TEST_STATUS_CONTEXT,
+        description: `Label Test skipped for ignored PR author ${pullRequestAuthor}.`,
+        target_url: pullRequest?.html_url ?? `https://github.com/${repository}/pull/${pullRequestNumber}`,
+      },
+    );
+
+    return {
+      ignored: true,
+      author: pullRequestAuthor,
+      headSha: actualHeadSha,
+    };
+  }
 }
 
 async function readPullRequestNumber() {
@@ -276,16 +351,22 @@ async function readPullRequestNumber() {
 
 async function main() {
   const token = process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
+  const statusToken = process.env.GITHUB_TOKEN;
   const repository = process.env.TARGET_REPOSITORY;
   const pullRequestNumber = await readPullRequestNumber();
   const workflowPath = process.env.LABEL_TEST_WORKFLOW_PATH;
+  const config = validateLabelTestWorkflowConfig(
+    await readJsonc(path.join(process.cwd(), "config", "label-test-workflow-config.jsonc")),
+  );
   const run = process.env.REVIEW_SIGNAL_HEAD_SHA
     ? await rerunLabelTestForReviewSignal({
       token,
+      statusToken,
       repository,
       pullRequestNumber,
       expectedHeadSha: process.env.REVIEW_SIGNAL_HEAD_SHA,
       workflowPath,
+      ignoredPullRequestAuthors: config.ignoredPullRequestAuthors,
     })
     : await rerunLabelTestForPullRequest({
       token,
@@ -297,7 +378,11 @@ async function main() {
       workflowPath,
     });
 
-  console.log(`Requested rerun of Label Test workflow run ${run.id}.`);
+  if (run.ignored) {
+    console.log(`Posted successful ${LABEL_TEST_STATUS_CONTEXT} status for ignored PR author ${run.author}.`);
+  } else {
+    console.log(`Requested rerun of Label Test workflow run ${run.id}.`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

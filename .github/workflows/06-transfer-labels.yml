@@ -1,0 +1,74 @@
+name: 06 - Transfer-Labels
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "[TEST MODE] Preview label transfers without applying them. Writes a preview changelog to the workflow summary."
+        required: false
+        type: boolean
+        default: false
+      override_existing:
+        description: "Override receiving labels to match the source exactly, deleting labels absent from the source. Unchecked: only add missing labels."
+        required: false
+        type: boolean
+        default: false
+      source_repository:
+        description: "Starting repository to copy labels from. Format: repo-name or owner/repo-name"
+        required: true
+        type: string
+      target_repository:
+        description: "Receiving repository to copy labels into. Format: repo-name or owner/repo-name"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  transfer-labels:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out latest default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Load properties
+        id: properties
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/export-properties.mjs
+
+      - name: Resolve PAT auth token
+        id: pat_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'pat' }}
+        env:
+          AUTH_MODE: pat
+          PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Resolve GitHub App auth token
+        id: app_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'githubApp' }}
+        env:
+          AUTH_MODE: githubApp
+          GITHUB_APP_ID: ${{ secrets[steps.properties.outputs.github_app_id_secret_name] }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets[steps.properties.outputs.github_app_private_key_secret_name] }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Transfer labels between repositories
+        env:
+          ORG_NAME: ${{ steps.properties.outputs.organization }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          OVERRIDE_EXISTING: ${{ inputs.override_existing }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+        run: node scripts/transfer-labels.mjs

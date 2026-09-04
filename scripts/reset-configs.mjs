@@ -109,6 +109,13 @@ const configDefaults = {
     // "Do Not Merge"
   ],
 
+  // Pull requests opened by these GitHub logins pass Label Test without applying label or approval rules.
+  // If GitHub suppresses the initial pull_request_target event for a GITHUB_TOKEN-created PR, the success
+  // status is posted after the existing review-refresh workflow receives a human review event.
+  "ignoredPullRequestAuthors": [
+    // "github-actions[bot]"
+  ],
+
   // Add required or failing labels that apply only to one repository. Repository keys must use the
   // full "owner/repository" name. These lists are added to the organization-wide lists above.
   "repositoryLabels": {

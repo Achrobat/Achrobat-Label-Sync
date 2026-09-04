@@ -24,6 +24,7 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
       JSON.stringify({
         requiredLabels: ["Bug"],
         failingLabels: ["Blocked"],
+        ignoredPullRequestAuthors: ["github-actions[bot]"],
         repositoryLabels: {
           "example-org/example-repo": {
             requiredLabels: ["Repo Feature"],
@@ -59,6 +60,7 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
     assert.deepEqual(resetConfig, {
       requiredLabels: [],
       failingLabels: [],
+      ignoredPullRequestAuthors: [],
       repositoryLabels: {},
       protectedLabelApprovals: [],
       workflowDistribution: {

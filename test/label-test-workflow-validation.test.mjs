@@ -7,6 +7,7 @@ test("validateLabelTestWorkflowConfig accepts empty required labels", () => {
   const config = validateLabelTestWorkflowConfig({
     requiredLabels: [],
     failingLabels: ["Blocked"],
+    ignoredPullRequestAuthors: [" github-actions[bot] "],
     repositoryLabels: {
       "Example-Org/Special-Repo": {
         requiredLabels: [" Repo Feature "],
@@ -25,6 +26,7 @@ test("validateLabelTestWorkflowConfig accepts empty required labels", () => {
 
   assert.deepEqual(config.requiredLabels, []);
   assert.deepEqual(config.failingLabels, ["Blocked"]);
+  assert.deepEqual(config.ignoredPullRequestAuthors, ["github-actions[bot]"]);
   assert.deepEqual(config.repositoryLabels, new Map([
     ["example-org/special-repo", {
       requiredLabels: ["Repo Feature"],
@@ -37,6 +39,19 @@ test("validateLabelTestWorkflowConfig accepts empty required labels", () => {
   ]);
   assert.equal(config.workflowDistribution.whitelist.has("example-repo"), true);
   assert.equal(config.workflowDistribution.whitelist.has("example-org/other-repo"), true);
+});
+
+test("validateLabelTestWorkflowConfig rejects duplicate normalized ignored pull request authors", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      requiredLabels: [],
+      failingLabels: [],
+      ignoredPullRequestAuthors: ["github-actions[bot]", "GitHub-Actions[bot]"],
+      protectedLabelApprovals: [],
+      workflowDistribution: { whitelist: [], blacklist: [] },
+    }),
+    /Duplicate ignoredPullRequestAuthors entry detected: "GitHub-Actions\[bot\]"\./,
+  );
 });
 
 test("validateLabelTestWorkflowConfig requires full names for repository-specific labels", () => {

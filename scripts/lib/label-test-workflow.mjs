@@ -92,10 +92,25 @@ async function hasAcceptedProtectedApproval(approvers, approvedReviews, isTeamMe
 export async function evaluatePrLabelTest({
   config,
   targetRepository,
+  pullRequestAuthor,
   prLabels,
   reviews,
   isTeamMember,
 }) {
+  const normalizedAuthor = typeof pullRequestAuthor === "string"
+    ? normalizeName(pullRequestAuthor)
+    : null;
+  const ignoredAuthors = new Set(
+    (config.ignoredPullRequestAuthors ?? []).map((author) => normalizeName(author)),
+  );
+
+  if (normalizedAuthor !== null && ignoredAuthors.has(normalizedAuthor)) {
+    return {
+      passed: true,
+      failures: [],
+    };
+  }
+
   const failures = [];
   const presentLabels = labelNames(prLabels);
   const repositoryRules = targetRepository

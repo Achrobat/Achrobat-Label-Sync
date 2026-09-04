@@ -365,6 +365,34 @@ function validateLabelNameEntries(entries, configKey) {
   });
 }
 
+function validatePullRequestAuthorEntries(entries) {
+  const configKey = "ignoredPullRequestAuthors";
+  assert(
+    Array.isArray(entries),
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`,
+  );
+
+  const seen = new Set();
+
+  return entries.map((entry, index) => {
+    assert(
+      typeof entry === "string" && entry.trim(),
+      `"${configKey}" entry at index ${index} must be a non-empty string.`,
+    );
+
+    const author = entry.trim();
+    assert(
+      !/[\/\s]/.test(author),
+      `"${configKey}" entry "${author}" must be a GitHub login without whitespace or "/".`,
+    );
+
+    const key = normalizeName(author);
+    assert(!seen.has(key), `Duplicate ${configKey} entry detected: "${author}".`);
+    seen.add(key);
+    return author;
+  });
+}
+
 function validateRepositoryLabelEntries(repositoryLabels) {
   assert(
     repositoryLabels && typeof repositoryLabels === "object" && !Array.isArray(repositoryLabels),
@@ -478,6 +506,9 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   return {
     requiredLabels: validateLabelNameEntries(labelTestWorkflowConfig.requiredLabels ?? [], "requiredLabels"),
     failingLabels: validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels"),
+    ignoredPullRequestAuthors: validatePullRequestAuthorEntries(
+      labelTestWorkflowConfig.ignoredPullRequestAuthors ?? [],
+    ),
     repositoryLabels: validateRepositoryLabelEntries(labelTestWorkflowConfig.repositoryLabels ?? {}),
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
     workflowDistribution: {

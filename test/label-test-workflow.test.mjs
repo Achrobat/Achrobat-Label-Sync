@@ -9,6 +9,7 @@ import {
 const emptyConfig = {
   requiredLabels: [],
   failingLabels: [],
+  ignoredPullRequestAuthors: [],
   protectedLabelApprovals: [],
   repositoryLabels: new Map(),
 };
@@ -58,6 +59,24 @@ test("evaluatePrLabelTest lets failing labels override matching required labels"
   assert.deepEqual(result.failures, [
     'PR has failing label "Blocked".',
   ]);
+});
+
+test("evaluatePrLabelTest passes an ignored pull request author without applying label rules", async () => {
+  const result = await evaluatePrLabelTest({
+    config: {
+      ...emptyConfig,
+      requiredLabels: ["Bug"],
+      failingLabels: ["Blocked"],
+      ignoredPullRequestAuthors: ["github-actions[bot]"],
+    },
+    pullRequestAuthor: "GitHub-Actions[bot]",
+    prLabels: [{ name: "Blocked" }],
+    reviews: [],
+    isTeamMember: async () => false,
+  });
+
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.failures, []);
 });
 
 test("evaluatePrLabelTest accepts a repository-specific required label", async () => {
