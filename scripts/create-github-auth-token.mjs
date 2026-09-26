@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { assert } from "./lib/config-utils.mjs";
 
-async function outputToken(token, tokenPermissions = null) {
+async function outputToken(token, tokenPermissions = null, tokenLogin = null) {
   console.log("::add-mask::" + token);
 
   if (!process.env.GITHUB_ENV) {
@@ -17,6 +17,7 @@ async function outputToken(token, tokenPermissions = null) {
       `CONFIG_LABEL_SYNC_TOKEN=${token}`,
       `PUSH_TOKEN=${token}`,
       `LABEL_SYNC_TOKEN_PERMISSIONS=${tokenPermissions ? JSON.stringify(tokenPermissions) : ""}`,
+      `LABEL_SYNC_TOKEN_LOGIN=${tokenLogin ?? ""}`,
       "",
     ].join("\n"),
     "utf8",
@@ -49,6 +50,31 @@ function createAppJwt(appId, privateKey) {
   return `${unsignedToken}.${signature}`;
 }
 
+// Installation tokens act as "<app-slug>[bot]", but they cannot look up their own app. The slug is
+// read here with the app JWT so Label Test can recognize label changes made by Label Sync workflows
+// such as Remove-Labels. This lookup is best effort and never blocks token creation.
+async function getAppBotLogin(jwt) {
+  try {
+    const response = await fetch("https://api.github.com/app", {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${jwt}`,
+        "User-Agent": "label-sync-auth",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const app = await response.json();
+    return typeof app?.slug === "string" && app.slug ? `${app.slug}[bot]` : null;
+  } catch {
+    return null;
+  }
+}
+
 async function createInstallationToken({ appId, privateKey, installationId }) {
   const jwt = createAppJwt(appId, privateKey);
   const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
@@ -71,6 +97,7 @@ async function createInstallationToken({ appId, privateKey, installationId }) {
   return {
     token: body.token,
     permissions: body.permissions ?? null,
+    login: await getAppBotLogin(jwt),
   };
 }
 
@@ -94,8 +121,8 @@ async function main() {
   assert(privateKey, "GITHUB_APP_PRIVATE_KEY is required when properties.authentication.mode is \"githubApp\".");
   assert(installationId, "GITHUB_APP_INSTALLATION_ID is required when properties.authentication.mode is \"githubApp\".");
 
-  const { token, permissions } = await createInstallationToken({ appId, privateKey, installationId });
-  await outputToken(token, permissions);
+  const { token, permissions, login } = await createInstallationToken({ appId, privateKey, installationId });
+  await outputToken(token, permissions, login);
 }
 
 main().catch((error) => {

@@ -95,6 +95,11 @@ test("the reusable label test routes policy and refresh events inside one job", 
   assert.match(workflow, /PULL_REQUEST_NUMBER:\s*\$\{\{ github\.event\.pull_request\.number \}\}/);
   assert.match(workflow, /name: Check PR labels and approvals\s*\n\s*if:\s*\$\{\{ github\.event_name == 'pull_request_target' \}\}/);
   assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
+  assert.match(workflow, /issues:\s*read/);
+  assert.match(workflow, /pull-requests:\s*write/);
+  assert.match(workflow, /LABEL_EVENT_ACTION:\s*\$\{\{ github\.event\.action \}\}/);
+  assert.match(workflow, /LABEL_EVENT_LABEL:\s*\$\{\{ github\.event\.label\.name \}\}/);
+  assert.match(workflow, /LABEL_EVENT_SENDER:\s*\$\{\{ github\.event\.sender\.login \}\}/);
   assert.match(workflow, /name: Rerun authoritative Label Test\s*\n\s*if:\s*\$\{\{ github\.event_name == 'workflow_run' \}\}/);
   assert.match(workflow, /PULL_REQUEST_NUMBER_FILE:\s*\$\{\{ runner\.temp \}\}\/label-test-review-context\/pr-number\.txt/);
   assert.match(workflow, /REVIEW_SIGNAL_HEAD_SHA:\s*\$\{\{ inputs\.review_signal_head_sha \}\}/);

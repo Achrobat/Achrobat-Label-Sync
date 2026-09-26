@@ -38,6 +38,19 @@
     // { "label": "Affects Balance", "approver": "UltraProdigy" }
   ],
 
+  // Sticky labels stay on a PR once applied. If anyone other than a listed remover (user, team member, or
+  // GitHub App bot login such as "my-app[bot]") takes one off, Label Test puts it straight back.
+  // Combine with protectedLabelApprovals so the label cannot be removed to skip a required approval.
+  // Removals made by Label Sync workflows such as Remove-Labels are always allowed.
+  "stickyLabels": [
+    // { "label": "Affects Balance", "remover": "teams/admin" },
+    // { "label": "Affects Balance", "remover": "UltraProdigy" }
+  ],
+
+  // When true, the first time a sticky label is restored on a PR, Label Test posts a one-time comment naming
+  // who can remove it. Later restorations of the same label on that PR do not comment again.
+  "stickyLabelComment": false,
+
   // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
   // when it is manually run.
   "workflowDistribution": {
