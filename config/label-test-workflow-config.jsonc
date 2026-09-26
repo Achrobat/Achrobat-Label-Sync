@@ -63,8 +63,8 @@
   "stickyLabels": [
     // { "label": "Affects Balance", "remover": "teams/admin" },
     // { "label": "Affects Balance", "remover": "UltraProdigy" }
-    { "label": "Affects Balance", "approver": "UltraProdigy" },
-    { "label": "Affects Balance", "approver": "teams/Admin" }
+    { "label": "Affects Balance", "remover": "UltraProdigy" },
+    { "label": "Affects Balance", "remover": "teams/Admin" }
   ],
 
   // When true, the first time a sticky label is restored on a PR, Label Test posts a one-time comment naming
