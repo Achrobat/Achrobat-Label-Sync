@@ -430,37 +430,42 @@ function validateRepositoryLabelEntries(repositoryLabels) {
   return validated;
 }
 
-function validateProtectedLabelApprover(value) {
-  assert(typeof value === "string" && value.trim(), "protectedLabelApprovals approver must be a non-empty string.");
+function validateLabelMember(value, { configKey, role, allowBotLogins = false }) {
+  assert(typeof value === "string" && value.trim(), `${configKey} ${role} must be a non-empty string.`);
 
-  const approver = value.trim();
+  const member = value.trim();
 
-  if (approver.startsWith("teams/")) {
-    const slug = approver.slice("teams/".length).trim();
-    assert(slug, `protectedLabelApprovals approver "${approver}" must include a team slug after "teams/".`);
-    assert(!slug.includes("/"), `protectedLabelApprovals approver "${approver}" must include only one "teams/" prefix.`);
-    assert(/^[A-Za-z0-9_.-]+$/.test(slug), `protectedLabelApprovals team slug "${slug}" contains invalid characters.`);
+  if (member.startsWith("teams/")) {
+    const slug = member.slice("teams/".length).trim();
+    assert(slug, `${configKey} ${role} "${member}" must include a team slug after "teams/".`);
+    assert(!slug.includes("/"), `${configKey} ${role} "${member}" must include only one "teams/" prefix.`);
+    assert(/^[A-Za-z0-9_.-]+$/.test(slug), `${configKey} team slug "${slug}" contains invalid characters.`);
     return {
       type: "team",
       slug,
-      value: approver,
+      value: member,
     };
   }
 
-  assert(!approver.includes("/"), `protectedLabelApprovals user approver "${approver}" must not contain "/". Use "teams/<slug>" for teams.`);
-  assert(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(approver), `protectedLabelApprovals user approver "${approver}" is not a valid GitHub username.`);
+  assert(!member.includes("/"), `${configKey} user ${role} "${member}" must not contain "/". Use "teams/<slug>" for teams.`);
+
+  const login = allowBotLogins ? member.replace(/\[bot\]$/i, "") : member;
+  assert(
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login),
+    `${configKey} user ${role} "${member}" is not a valid GitHub username.`,
+  );
 
   return {
     type: "user",
-    login: approver,
-    value: approver,
+    login: member,
+    value: member,
   };
 }
 
-function validateProtectedLabelApprovals(entries) {
+function validateLabelMemberEntries(entries, { configKey, role, allowBotLogins = false }) {
   assert(
     Array.isArray(entries),
-    'config/label-test-workflow-config.jsonc field "protectedLabelApprovals" must contain an array.',
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`,
   );
 
   const seen = new Set();
@@ -468,27 +473,52 @@ function validateProtectedLabelApprovals(entries) {
   return entries.map((entry, index) => {
     assert(
       entry && typeof entry === "object" && !Array.isArray(entry),
-      `protectedLabelApprovals entry at index ${index} must be an object.`,
+      `${configKey} entry at index ${index} must be an object.`,
     );
     assert(
       typeof entry.label === "string" && entry.label.trim(),
-      `protectedLabelApprovals entry at index ${index} must include a non-empty label.`,
+      `${configKey} entry at index ${index} must include a non-empty label.`,
     );
 
     const label = entry.label.trim();
-    const approver = validateProtectedLabelApprover(entry.approver);
-    const key = `${normalizeName(label)}\0${normalizeName(approver.value)}`;
+    const member = validateLabelMember(entry[role], { configKey, role, allowBotLogins });
+    const key = `${normalizeName(label)}\0${normalizeName(member.value)}`;
     assert(
       !seen.has(key),
-      `Duplicate protectedLabelApprovals entry detected: "${label}" with approver "${approver.value}".`,
+      `Duplicate ${configKey} entry detected: "${label}" with ${role} "${member.value}".`,
     );
     seen.add(key);
 
     return {
       label,
-      approver,
+      [role]: member,
     };
   });
+}
+
+function validateProtectedLabelApprovals(entries) {
+  return validateLabelMemberEntries(entries, {
+    configKey: "protectedLabelApprovals",
+    role: "approver",
+  });
+}
+
+// Sticky label removers may include GitHub App bot logins such as "label-sync-app[bot]" so an
+// automation identity (for example the Remove-Labels workflow token) can be allowed to remove them.
+function validateStickyLabels(entries) {
+  return validateLabelMemberEntries(entries, {
+    configKey: "stickyLabels",
+    role: "remover",
+    allowBotLogins: true,
+  });
+}
+
+function validateStickyLabelComment(value) {
+  assert(
+    typeof value === "boolean",
+    'config/label-test-workflow-config.jsonc field "stickyLabelComment" must be true or false.',
+  );
+  return value;
 }
 
 export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
@@ -511,6 +541,8 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     ),
     repositoryLabels: validateRepositoryLabelEntries(labelTestWorkflowConfig.repositoryLabels ?? {}),
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
+    stickyLabels: validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []),
+    stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     workflowDistribution: {
       whitelist: validateRepositoryEntries(
         workflowDistribution.whitelist ?? [],

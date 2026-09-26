@@ -89,6 +89,215 @@ async function hasAcceptedProtectedApproval(approvers, approvedReviews, isTeamMe
   return false;
 }
 
+export function isIgnoredPullRequestAuthor(config, pullRequestAuthor) {
+  if (typeof pullRequestAuthor !== "string") {
+    return false;
+  }
+
+  return (config.ignoredPullRequestAuthors ?? [])
+    .some((author) => normalizeName(author) === normalizeName(pullRequestAuthor));
+}
+
+function stickyRemoversByLabel(stickyLabels) {
+  const byLabel = new Map();
+
+  for (const entry of stickyLabels) {
+    const key = normalizeName(entry.label);
+    const existing = byLabel.get(key) ?? { label: entry.label, removers: [] };
+    existing.removers.push(entry.remover);
+    byLabel.set(key, existing);
+  }
+
+  return byLabel;
+}
+
+function eventTime(event) {
+  const createdAt = Date.parse(event?.created_at ?? "");
+  return Number.isNaN(createdAt) ? 0 : createdAt;
+}
+
+function eventId(event) {
+  return Number.isFinite(event?.id) ? event.id : 0;
+}
+
+function latestLabelEvents(labelEvents) {
+  const latest = new Map();
+
+  for (const event of labelEvents ?? []) {
+    if (
+      (event?.event !== "labeled" && event?.event !== "unlabeled")
+      || typeof event.label?.name !== "string"
+    ) {
+      continue;
+    }
+
+    const key = normalizeName(event.label.name);
+    const previous = latest.get(key);
+
+    if (
+      !previous
+      || eventTime(event) > eventTime(previous)
+      || (eventTime(event) === eventTime(previous) && eventId(event) > eventId(previous))
+    ) {
+      latest.set(key, event);
+    }
+  }
+
+  return latest;
+}
+
+async function isAuthorizedMember(members, login, isTeamMember) {
+  if (typeof login !== "string" || !login) {
+    return false;
+  }
+
+  for (const member of members) {
+    if (member.type === "user" && normalizeName(member.login) === normalizeName(login)) {
+      return true;
+    }
+
+    if (member.type === "team" && await isTeamMember(member.slug, login)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Finds sticky labels that are missing from the pull request because someone who is not a configured
+// remover took them off. The issue timeline is the source of truth: for each missing sticky label, the
+// latest labeled/unlabeled event decides whether it was removed and by whom. The triggering
+// pull_request_target "unlabeled" payload is only used when the timeline does not show that removal yet,
+// which covers GitHub's short delay before new timeline events become visible.
+//
+// Removals made by the Label Sync automation identity (the configured PAT owner or GitHub App bot) are
+// always accepted. Only admins can run Label Sync workflows such as Remove-Labels, so those removals
+// take precedence over the configured removers.
+export async function findStickyLabelsToRestore({
+  config,
+  prLabels,
+  labelEvents,
+  triggeringEvent,
+  isTeamMember,
+  isAutomationActor = async () => false,
+}) {
+  const stickyLabels = config.stickyLabels ?? [];
+
+  if (stickyLabels.length === 0) {
+    return [];
+  }
+
+  const presentLabels = labelNames(prLabels);
+  const latestEvents = latestLabelEvents(labelEvents);
+  const restorations = [];
+
+  for (const [labelKey, sticky] of stickyRemoversByLabel(stickyLabels).entries()) {
+    if (presentLabels.has(labelKey)) {
+      continue;
+    }
+
+    let removal = null;
+    const latestEvent = latestEvents.get(labelKey);
+
+    if (latestEvent?.event === "unlabeled") {
+      removal = {
+        label: latestEvent.label.name,
+        removedBy: latestEvent.actor?.login ?? null,
+      };
+    } else if (
+      triggeringEvent?.action === "unlabeled"
+      && typeof triggeringEvent.label === "string"
+      && normalizeName(triggeringEvent.label) === labelKey
+    ) {
+      removal = {
+        label: triggeringEvent.label,
+        removedBy: triggeringEvent.sender || null,
+      };
+    }
+
+    if (removal === null) {
+      continue;
+    }
+
+    if (removal.removedBy && await isAutomationActor(removal.removedBy)) {
+      continue;
+    }
+
+    if (await isAuthorizedMember(sticky.removers, removal.removedBy, isTeamMember)) {
+      continue;
+    }
+
+    restorations.push({
+      label: removal.label,
+      removedBy: removal.removedBy,
+      removers: sticky.removers,
+    });
+  }
+
+  return restorations;
+}
+
+export function formatStickyRestoration(restoration) {
+  const actor = restoration.removedBy ? `@${restoration.removedBy}` : "an unknown user";
+  return `Sticky label "${restoration.label}" was removed by ${actor} and has been restored. `
+    + `Only ${formatApprovers(restoration.removers)} can remove it.`;
+}
+
+function describeRemover(remover) {
+  return remover.type === "team" ? `the ${remover.slug} team` : remover.login;
+}
+
+function joinWithOr(values) {
+  if (values.length <= 1) {
+    return values.join("");
+  }
+
+  if (values.length === 2) {
+    return `${values[0]} or ${values[1]}`;
+  }
+
+  return `${values.slice(0, -1).join(", ")}, or ${values.at(-1)}`;
+}
+
+// Hidden marker used to post the sticky label notice only once per label on each pull request.
+export function stickyLabelCommentMarker(label) {
+  return `<!-- label-sync:sticky-label:${encodeURIComponent(normalizeName(label))} -->`;
+}
+
+export function hasStickyLabelComment(comments, label) {
+  const marker = stickyLabelCommentMarker(label);
+  return (comments ?? []).some((comment) => typeof comment?.body === "string" && comment.body.includes(marker));
+}
+
+// Builds one comment for the restored labels that have not been announced on this pull request yet.
+// Users and teams are written without "@" so the notice does not ping the removers.
+export function buildStickyLabelComment(restorations, comments) {
+  const pending = [];
+  const seen = new Set();
+
+  for (const restoration of restorations) {
+    const key = normalizeName(restoration.label);
+
+    if (seen.has(key) || hasStickyLabelComment(comments, restoration.label)) {
+      continue;
+    }
+
+    seen.add(key);
+    pending.push(restoration);
+  }
+
+  if (pending.length === 0) {
+    return null;
+  }
+
+  return pending
+    .map((restoration) => [
+      stickyLabelCommentMarker(restoration.label),
+      `The **${restoration.label}** label is sticky and can only be removed by ${joinWithOr(restoration.removers.map(describeRemover))}.`,
+    ].join("\n"))
+    .join("\n\n");
+}
+
 export async function evaluatePrLabelTest({
   config,
   targetRepository,
@@ -97,14 +306,7 @@ export async function evaluatePrLabelTest({
   reviews,
   isTeamMember,
 }) {
-  const normalizedAuthor = typeof pullRequestAuthor === "string"
-    ? normalizeName(pullRequestAuthor)
-    : null;
-  const ignoredAuthors = new Set(
-    (config.ignoredPullRequestAuthors ?? []).map((author) => normalizeName(author)),
-  );
-
-  if (normalizedAuthor !== null && ignoredAuthors.has(normalizedAuthor)) {
+  if (isIgnoredPullRequestAuthor(config, pullRequestAuthor)) {
     return {
       passed: true,
       failures: [],

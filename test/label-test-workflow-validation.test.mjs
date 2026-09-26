@@ -140,3 +140,69 @@ test("validateLabelTestWorkflowConfig rejects invalid distribution repository na
     /"workflowDistribution.whitelist" entry "bad repo" must be either "repo-name" or "owner\/repo-name"\./,
   );
 });
+
+test("validateLabelTestWorkflowConfig accepts sticky label removers including GitHub App bot logins", () => {
+  const config = validateLabelTestWorkflowConfig({
+    stickyLabels: [
+      { label: " Affects Balance ", remover: "teams/admin" },
+      { label: "Affects Balance", remover: "UltraProdigy" },
+      { label: "Affects Balance", remover: "label-sync-app[bot]" },
+    ],
+  });
+
+  assert.deepEqual(config.stickyLabels, [
+    { label: "Affects Balance", remover: { type: "team", slug: "admin", value: "teams/admin" } },
+    { label: "Affects Balance", remover: { type: "user", login: "UltraProdigy", value: "UltraProdigy" } },
+    { label: "Affects Balance", remover: { type: "user", login: "label-sync-app[bot]", value: "label-sync-app[bot]" } },
+  ]);
+});
+
+test("validateLabelTestWorkflowConfig defaults sticky labels to an empty list", () => {
+  assert.deepEqual(validateLabelTestWorkflowConfig({}).stickyLabels, []);
+});
+
+test("validateLabelTestWorkflowConfig rejects invalid sticky label entries", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: {} }),
+    /field "stickyLabels" must contain an array\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: [{ label: "Affects Balance" }] }),
+    /stickyLabels remover must be a non-empty string\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: [{ label: "", remover: "teams/admin" }] }),
+    /stickyLabels entry at index 0 must include a non-empty label\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: [{ label: "Affects Balance", remover: "org/admin" }] }),
+    /stickyLabels user remover "org\/admin" must not contain "\/"\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      stickyLabels: [
+        { label: "Affects Balance", remover: "teams/admin" },
+        { label: "affects balance", remover: "teams/Admin" },
+      ],
+    }),
+    /Duplicate stickyLabels entry detected: "affects balance" with remover "teams\/Admin"\./,
+  );
+});
+
+test("validateLabelTestWorkflowConfig keeps rejecting bot logins as protected label approvers", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      protectedLabelApprovals: [{ label: "Affects Balance", approver: "label-sync-app[bot]" }],
+    }),
+    /protectedLabelApprovals user approver "label-sync-app\[bot\]" is not a valid GitHub username\./,
+  );
+});
+
+test("validateLabelTestWorkflowConfig defaults stickyLabelComment to false and accepts booleans", () => {
+  assert.equal(validateLabelTestWorkflowConfig({}).stickyLabelComment, false);
+  assert.equal(validateLabelTestWorkflowConfig({ stickyLabelComment: true }).stickyLabelComment, true);
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabelComment: "true" }),
+    /field "stickyLabelComment" must be true or false\./,
+  );
+});

@@ -4,6 +4,7 @@ import { assert, labelsExactlyMatch, normalizeDescription, normalizeName } from 
 import { validateLabels } from "./lib/config-validation.mjs";
 import { renderLabelSyncSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import { formatRepositoryLink, getRepositorySkipReason, parseTokenPermissions } from "./lib/repository-selection.mjs";
+import { createGithubRequest } from "./lib/github-request.mjs";
 
 function resolveRepository(value, organization, inputName) {
   const name = typeof value === "string" ? value.trim() : "";
@@ -20,27 +21,10 @@ function resolveRepository(value, organization, inputName) {
   return fullName;
 }
 
-async function githubRequest(token, method, apiPath, body) {
-  const response = await fetch(`https://api.github.com${apiPath}`, {
-    method,
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "label-sync",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!response.ok) {
-    throw new Error(`${method} ${apiPath} failed with ${response.status}: ${await response.text()}`);
-  }
-  return response.status === 204 ? null : response.json();
-}
-
-async function getAllLabels(token, repository) {
+async function getAllLabels(githubRequest, repository) {
   const labels = [];
   for (let page = 1; ; page += 1) {
-    const batch = await githubRequest(token, "GET", `/repos/${repository}/labels?per_page=100&page=${page}`);
+    const batch = await githubRequest("GET", `/repos/${repository}/labels?per_page=100&page=${page}`);
     assert(Array.isArray(batch), `Invalid label response for ${repository}.`);
     labels.push(...batch);
     if (batch.length < 100) {
@@ -60,6 +44,7 @@ export async function transferLabels({
   dryRun = false,
   overrideExisting = false,
   tokenPermissions = null,
+  githubRequest = createGithubRequest(token),
 }) {
   const result = {
     repository: "",
@@ -84,8 +69,8 @@ export async function transferLabels({
     targetName = resolveRepository(targetRepository, organization, "Receiving repository");
     assert(sourceName.toLowerCase() !== targetName.toLowerCase(), "Source and receiving repositories must be different repositories.");
     assert(token, "LABEL_SYNC_TOKEN is required.");
-    const source = await githubRequest(token, "GET", `/repos/${sourceName}`);
-    const target = await githubRequest(token, "GET", `/repos/${targetName}`);
+    const source = await githubRequest("GET", `/repos/${sourceName}`);
+    const target = await githubRequest("GET", `/repos/${targetName}`);
     assert(source.id && target.id, "GitHub did not return valid repository IDs.");
     assert(source.id !== target.id, "Source and receiving repositories must be different repositories.");
     // Use canonical names after resolving renamed/transferred repository aliases.
@@ -100,9 +85,9 @@ export async function transferLabels({
     }
 
     // Read and validate both complete label sets before making any changes.
-    const sourceLabels = await getAllLabels(token, sourceName);
+    const sourceLabels = await getAllLabels(githubRequest, sourceName);
     sourceCount = sourceLabels.length;
-    const targetLabels = await getAllLabels(token, targetName);
+    const targetLabels = await getAllLabels(githubRequest, targetName);
     initialTargetCount = targetLabels.length;
     if (overrideExisting) {
       for (const label of targetLabels) {
@@ -126,14 +111,14 @@ export async function transferLabels({
       const existing = targetByName.get(normalizeName(desired.name));
       if (!existing) {
         if (!dryRun) {
-          await githubRequest(token, "POST", `/repos/${targetName}/labels`, desired);
+          await githubRequest("POST", `/repos/${targetName}/labels`, desired);
         }
         result.createdLabels.push(desired);
         result.hasChanges = true;
         console.log(`  + ${desired.name}`);
       } else if (overrideExisting && !labelsExactlyMatch(existing, desired)) {
         if (!dryRun) {
-          await githubRequest(token, "PATCH", `/repos/${targetName}/labels/${encodeURIComponent(existing.name)}`, {
+          await githubRequest("PATCH", `/repos/${targetName}/labels/${encodeURIComponent(existing.name)}`, {
             new_name: desired.name,
             color: desired.color,
             description: desired.description,
@@ -151,7 +136,7 @@ export async function transferLabels({
       for (const existing of targetLabels) {
         if (sourceNames.has(normalizeName(existing.name))) continue;
         if (!dryRun) {
-          await githubRequest(token, "DELETE", `/repos/${targetName}/labels/${encodeURIComponent(existing.name)}`);
+          await githubRequest("DELETE", `/repos/${targetName}/labels/${encodeURIComponent(existing.name)}`);
         }
         result.deletedConfiguredLabels.push(existing);
         result.hasChanges = true;

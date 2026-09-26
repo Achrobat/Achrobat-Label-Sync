@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { transferLabels } from "../scripts/transfer-labels.mjs";
+import { createGithubRequest } from "../scripts/lib/github-request.mjs";
 
 const label = (name, color = "abcdef", description = "") => ({ name, color, description });
 
@@ -27,6 +28,7 @@ async function setup(t, {
   source = [label("Bug", "ff0000", "Source description"), label("New / 🚀", "123456", null)],
   target = [label("bug", "000000", "Keep this"), label("Extra")],
   failRequest = () => false,
+  responseForRequest = () => null,
   sourceId = 1,
   targetId = 2,
   archived = false,
@@ -42,6 +44,8 @@ async function setup(t, {
     else process.env.GITHUB_STEP_SUMMARY = previousSummary;
   });
   const requests = [];
+  const waits = [];
+  let time = 1_700_000_000_000;
   t.mock.method(globalThis, "fetch", async (url, options) => {
     const parsed = new URL(url);
     const request = {
@@ -49,10 +53,13 @@ async function setup(t, {
       path: parsed.pathname,
       query: parsed.searchParams,
       body: options.body ? JSON.parse(options.body) : undefined,
+      time,
     };
     requests.push(request);
     assert.equal(parsed.origin, "https://api.github.com");
     assert.equal(options.headers.Authorization, "Bearer test-token");
+    const customResponse = responseForRequest(request);
+    if (customResponse) return customResponse;
     if (failRequest(request)) return new Response("Simulated failure", { status: 403 });
     if (request.method === "GET") {
       if (request.path === "/repos/example/source") {
@@ -73,11 +80,16 @@ async function setup(t, {
   });
   return {
     requests,
+    waits,
     writes: () => requests.filter(({ method }) => method !== "GET"),
     summary: () => fs.readFile(summaryPath, "utf8"),
     run: (options = {}) => transferLabels({
       token: "test-token", organization: "example",
       sourceRepository: "source", targetRepository: "target", ...options,
+      githubRequest: createGithubRequest("test-token", {
+        now: () => time,
+        sleep: async (milliseconds) => { waits.push(milliseconds); time += milliseconds; },
+      }),
     }),
   };
 }
@@ -118,6 +130,7 @@ for (const overrideExisting of [false, true]) {
     const fixture = await setup(t);
     await fixture.run({ dryRun: true, overrideExisting });
     assert.deepEqual(fixture.writes(), []);
+    assert.deepEqual(fixture.waits, []);
     const summary = await fixture.summary();
     assert.match(summary, /# Transfer-Labels Fake Changelog/);
     assert.match(summary, /\*\*Test Mode:\*\* True/);
@@ -137,6 +150,60 @@ test("reads every page from both repositories before transferring", async (t) =>
     { method: "DELETE", path: "/repos/example/target/labels/Extra%20%2F%20%23%20%3F", body: undefined },
   ]);
   assert.match(await fixture.summary(), /\*\*Source Labels:\*\* 101/);
+});
+
+test("a 233-label transfer pauses on secondary limits and reports each copied label once", async (t) => {
+  let throttled = false;
+  const fixture = await setup(t, {
+    source: Array.from({ length: 233 }, (_, index) => label(`Label ${index}`)),
+    target: [],
+    responseForRequest: ({ method, body }) => {
+      if (method === "POST" && body.name === "Label 120" && !throttled) {
+        throttled = true;
+        return Response.json({ message: "You have exceeded a secondary rate limit." }, { status: 403 });
+      }
+      return null;
+    },
+  });
+  const result = await fixture.run();
+  assert.equal(result.createdLabels.length, 233);
+  const writes = fixture.writes();
+  assert.equal(writes.length, 234);
+  assert.equal(new Set(writes.map(({ body }) => body.name)).size, 233);
+  for (let index = 1; index < writes.length; index += 1) {
+    assert.ok(writes[index].time - writes[index - 1].time >= 1000, "Every write must be paced");
+  }
+  assert.deepEqual(fixture.waits.filter((milliseconds) => milliseconds >= 60000), [60000]);
+  const summary = await fixture.summary();
+  assert.match(summary, /\*\*Created Labels:\*\* 233/);
+  assert.doesNotMatch(summary, /## Workflow Failure/);
+  assert.equal((summary.match(/Created `Label 120`/g) ?? []).length, 1);
+});
+
+test("rerunning a partial 233-label transfer only creates the remaining labels", async (t) => {
+  const source = Array.from({ length: 233 }, (_, index) => label(`Label ${index}`));
+  const fixture = await setup(t, { source, target: source.slice(0, 150) });
+  await fixture.run();
+  assert.equal(fixture.writes().length, 83);
+  assert.ok(fixture.writes().every(({ method, body }) => method === "POST" && Number(body.name.slice(6)) >= 150));
+  assert.match(await fixture.summary(), /\*\*Created Labels:\*\* 83/);
+});
+
+test("exhausted rate-limit retries preserve the partial changelog and prevent deletions", async (t) => {
+  const fixture = await setup(t, {
+    source: [label("First"), label("Blocked")],
+    target: [label("Extra")],
+    responseForRequest: ({ method, body }) => method === "POST" && body.name === "Blocked"
+      ? new Response("Secondary rate limit", { status: 403 }) : null,
+  });
+  await assert.rejects(fixture.run({ overrideExisting: true }), /after 5 retries/);
+  assert.equal(fixture.writes().length, 7);
+  assert.ok(fixture.writes().every(({ method }) => method === "POST"));
+  const summary = await fixture.summary();
+  assert.match(summary, /\*\*Created Labels:\*\* 1/);
+  assert.match(summary, /\*\*Deleted Labels:\*\* 0/);
+  assert.match(summary, /## Workflow Failure/);
+  assert.doesNotMatch(summary, /Created `Blocked`/);
 });
 
 test("override is a no-op when the receiving repository already matches", async (t) => {

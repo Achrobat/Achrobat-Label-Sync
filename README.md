@@ -21,6 +21,7 @@ Features:
 - Reset selected config files back to default unconfigured versions
 - Write changelogs to GitHub Actions workflow summaries for real workflow changes and dry-run previews
 - Enforce centrally configured PR label requirements through a reusable required-check workflow
+- Make PR labels sticky so only configured users or teams can remove them once applied
 - Distribute PR label-test caller workflows to selected organization repositories
 - Copy all labels directly between two repositories, optionally making the receiving label set match exactly
 
@@ -184,6 +185,11 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // { "label": "Affects Balance", "approver": "teams/admin" },
     // { "label": "Affects Balance", "approver": "UltraProdigy" }
   ],
+  "stickyLabels": [
+    // { "label": "Affects Balance", "remover": "teams/admin" },
+    // { "label": "Affects Balance", "remover": "UltraProdigy" }
+  ],
+  "stickyLabelComment": false,
   "workflowDistribution": {
     "whitelist": [],
     "blacklist": []
@@ -203,6 +209,19 @@ Behavior:
 - If a protected label is present, at least one configured approver for that label must have latest effective review state `APPROVED`.
 - Plain approvers such as `UltraProdigy` are GitHub users.
 - Approvers prefixed with `teams/`, such as `teams/admin`, are GitHub team slugs in the configured organization.
+
+#### Sticky labels
+
+`stickyLabels` keeps a label on a pull request once it has been applied. Anyone can add a sticky label, but only a configured `remover` can take it off. If anyone else removes it, the next Label Test run puts it back before evaluating the policy, and adds a `Sticky label restored` warning to the run naming who removed it. When `stickyLabelComment` is `true` (default `false`), the first time a label is restored on a pull request, Label Test also comments, for example: "The **Affects Balance** label is sticky and can only be removed by the admin team or UltraProdigy." Later restorations of the same label on that pull request do not comment again. The comment names removers without `@`, so it does not notify them.
+
+- `remover` uses the same syntax as protected label approvers: a GitHub user such as `UltraProdigy`, or a team such as `teams/admin`. GitHub App bot logins such as `label-sync-app[bot]` are also accepted, so an automation identity can be allowed to remove the label.
+- Repeat an entry with the same label to allow several removers. Any one of them can remove it.
+- Pair a sticky label with a `protectedLabelApprovals` entry to stop authors from removing a label to skip its required approval. The label is restored in the same run that evaluates the policy, so the required check stays failing until an approver approves.
+- The pull request's label history decides whether a missing sticky label was removed and by whom, using the most recent add or remove event for that label. Label Test only restores a label that was applied and then removed by someone who is not a remover. Sticky labels that were never applied to a pull request are not added.
+- Pull requests opened by an `ignoredPullRequestAuthors` login are skipped, like the other label rules.
+- Sticky labels are enforced on pull requests that call the Label Test workflow. Labels on issues are not affected.
+- Removals made with the configured Label Sync token always take precedence, so `Remove-Labels` can remove sticky labels. Only Label Sync admins can run those workflows, so the token's identity is treated as an allowed remover: the GitHub App's `<app-slug>[bot]` login, or the PAT owner's account in PAT mode. In PAT mode, this also means the PAT owner can remove sticky labels by hand.
+- Restoring labels and posting the optional notice use the configured PAT or GitHub App token, which needs pull request (or issue) write access to the target repository; the `Remove-Labels` token already has this. Pull request labels and comments go through GitHub's issues API, since every pull request is also an issue. Without a configured token, the reusable workflow's `GITHUB_TOKEN` with `pull-requests: write` is used instead; a label restored with `GITHUB_TOKEN` does not start another Label Test run.
 
 Repository-specific rules are resolved centrally from the calling workflow's existing `github.repository` context. Adding or changing these rules does not require changes to the caller workflows.
 
@@ -259,6 +278,8 @@ Both inputs select repositories directly, independently of the configured sync s
 
 Override mode stops before any changes if the receiving repository has a label named `.` or `..`, because those names cannot be safely addressed through the label API's URL path.
 
+Transfers pause at least one second between label writes to reduce GitHub secondary rate limits. When GitHub rejects a request due to rate limiting, the workflow logs the wait and retries up to five times, honoring `Retry-After` and exhausted primary-limit reset headers. Retry waits start at one minute and grow exponentially; GitHub's headers can require a longer pause. A transfer creating 233 labels takes roughly four minutes plus API response time and any rate-limit waits. Permission, validation, and ambiguous network/server errors still stop the run. Rerun a partially completed transfer with the same inputs to finish the remaining changes.
+
 The workflow uses the Org-Label-Sync changelog layout in the GitHub Actions run summary, showing the source and receiving repositories, test and override settings, starting label counts, and created, updated, deleted, and retained counts. Retained labels are existing receiving labels left unchanged. Preview changelogs are marked as test-mode output. If the transfer fails partway through, the summary records completed changes and the failure; rerunning continues from the current label state.
 
 ### Config-Reset
@@ -290,7 +311,7 @@ Validation checks include:
 - Repository filter shape
 - Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
-- Label Test user and `teams/<slug>` approver syntax
+- Label Test user and `teams/<slug>` approver and sticky label remover syntax
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 
