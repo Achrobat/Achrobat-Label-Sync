@@ -86,6 +86,9 @@
     // { "label": "Requires Admin", "reviewer": "teams/admin" },
     // { "label": "Affects Balance", "reviewer": "teams/balance-team", "when": "afterApproval" },
     // { "label": "Needs Art Review", "reviewer": "teams/art", "when": "afterApproval", "approvedBy": "teams/developers, UltraProdigy" }
+    { "label": "Requires Admin", "reviewer": "teams/admin" },
+    { "label": "Affects Balance", "reviewer": "teams/admin", "when": "afterApproval" },
+    { "label": "Bug Fix", "reviewer": "UltraProdigy", "when": "afterApproval", "approvedBy": "NotUltraProdigy" }
   ],
 
   // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
