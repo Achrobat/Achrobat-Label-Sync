@@ -23,6 +23,22 @@ function formatDatePath(date) {
   return `${partValues.year}-${partValues.month}-${partValues.day}`;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// GitHub Actions replaces every occurrence of a secret's value in job summaries with "***". If any
+// secret available to the workflow equals part of the server URL (for example "github"), absolute
+// links such as https://github.com/org/repo turn into https://***.com/org/repo. Writing server links
+// as root-relative paths (/org/repo) keeps them working because the summary is shown on the server.
+export function toJobSummaryMarkdown(
+  markdown,
+  { serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com" } = {},
+) {
+  const baseUrl = String(serverUrl || "https://github.com").replace(/\/+$/, "");
+  return markdown.replace(new RegExp(`\\]\\(${escapeRegExp(baseUrl)}/`, "gi"), "](/");
+}
+
 function formatWorkflowRunLink(metadata) {
   if (!metadata.serverUrl || !metadata.repository || !metadata.runId) {
     return "Unavailable";
@@ -226,7 +242,7 @@ export async function writeChangelog({
     return null;
   }
 
-  await fs.appendFile(stepSummaryPath, changelog, "utf8");
+  await fs.appendFile(stepSummaryPath, toJobSummaryMarkdown(changelog), "utf8");
 
   console.log("Wrote changelog to the GitHub Actions job summary.");
   return stepSummaryPath;

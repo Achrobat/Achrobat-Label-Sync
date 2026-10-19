@@ -6,9 +6,11 @@ import {
   collapseLatestReviewStates,
   evaluatePrLabelTest,
   findStickyLabelsToRestore,
+  formatReviewRequest,
+  formatReviewWithdrawal,
   formatStickyRestoration,
   isIgnoredPullRequestAuthor,
-  stickyLabelCommentMarker,
+  planReviewRequests,
 } from "../scripts/lib/label-test-workflow.mjs";
 
 const emptyConfig = {
@@ -460,16 +462,26 @@ test("buildStickyLabelComment writes a notice naming the removers without pingin
 
   assert.equal(
     body,
-    `${stickyLabelCommentMarker("Affects Balance")}\n`
-      + "The **Affects Balance** label is sticky and can only be removed by the admin team or UltraProdigy.",
+    "The **Affects Balance** label is sticky and can only be removed by the admin team or UltraProdigy.",
   );
-  assert.doesNotMatch(body, /@/);
+  assert.doesNotMatch(body, /@|<!--/);
 });
 
 test("buildStickyLabelComment only posts the notice for the first removal of each label", () => {
   const previousComments = [
     { body: "Please take a look." },
-    { body: buildStickyLabelComment([{ ...balanceRestoration, label: "affects balance" }], []) },
+    { body: "The **affects balance** label is sticky and can only be removed by someone who has since changed." },
+  ];
+
+  assert.equal(buildStickyLabelComment([balanceRestoration], previousComments), null);
+});
+
+test("buildStickyLabelComment recognizes notices posted with the earlier hidden marker format", () => {
+  const previousComments = [
+    {
+      body: "<!-- label-sync:sticky-label:affects%20balance -->\n"
+        + "The **Affects Balance** label is sticky and can only be removed by the admin team.",
+    },
   ];
 
   assert.equal(buildStickyLabelComment([balanceRestoration], previousComments), null);
@@ -487,12 +499,310 @@ test("buildStickyLabelComment combines new notices and skips labels that were al
   };
   const body = buildStickyLabelComment(
     [balanceRestoration, blocked],
-    [{ body: stickyLabelCommentMarker("Affects Balance") }],
+    [{ body: "The **Affects Balance** label is sticky and can only be removed by the admin team." }],
   );
 
   assert.equal(
     body,
-    `${stickyLabelCommentMarker("Needs Design")}\n`
-      + "The **Needs Design** label is sticky and can only be removed by Lead, the design team, or label-sync-app[bot].",
+    "The **Needs Design** label is sticky and can only be removed by Lead, the design team, or label-sync-app[bot].",
   );
+});
+
+const adminTeam = { type: "team", slug: "admin", value: "teams/admin" };
+const balanceTeam = { type: "team", slug: "balance-team", value: "teams/balance-team" };
+const developersTeam = { type: "team", slug: "developers", value: "teams/developers" };
+
+function reviewRequestConfig(reviewRequests) {
+  return { ...emptyConfig, reviewRequests };
+}
+
+const reviewRequestEntries = [
+  { label: "Requires Admin", reviewer: adminTeam, when: "labeled", approvedBy: [] },
+  { label: "Affects Balance", reviewer: balanceTeam, when: "afterApproval", approvedBy: [] },
+];
+
+const teamMembers = {
+  admin: ["AdminUser"],
+  "balance-team": ["BalanceUser", "DevAndBalance"],
+  developers: ["DevUser", "DevAndBalance"],
+};
+
+async function isConfiguredTeamMember(slug, login) {
+  return (teamMembers[slug] ?? []).some((member) => member.toLowerCase() === login.toLowerCase());
+}
+
+function review(login, state, submittedAt, id) {
+  return { id, user: { login }, state, submitted_at: submittedAt };
+}
+
+function reviewRequestedEvent({ team, user, requester, createdAt, id }) {
+  return {
+    id,
+    event: "review_requested",
+    created_at: createdAt,
+    actor: { login: requester },
+    review_requester: { login: requester },
+    ...(team ? { requested_team: { slug: team } } : {}),
+    ...(user ? { requested_reviewer: { login: user } } : {}),
+  };
+}
+
+const isLabelSync = async (login) => login === "label-sync-app[bot]";
+
+test("planReviewRequests requests the reviewer as soon as a labeled entry's label is present", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "requires admin" }],
+    reviews: [],
+    labelEvents: [labelEvent("labeled", "Requires Admin", "Contributor", "2026-10-18T10:00:00Z", 1)],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan, {
+    request: [{ label: "requires admin", reviewer: adminTeam, when: "labeled", approvedBy: null }],
+    withdraw: [],
+  });
+  assert.equal(
+    formatReviewRequest(plan.request[0]),
+    'Requested review from teams/admin because "requires admin" is on the PR.',
+  );
+});
+
+test("planReviewRequests waits for an outside approval before requesting an afterApproval reviewer", async () => {
+  const base = {
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }],
+    labelEvents: [labelEvent("labeled", "Affects Balance", "Contributor", "2026-10-18T10:00:00Z", 1)],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  };
+
+  const beforeApproval = await planReviewRequests({
+    ...base,
+    reviews: [review("DevUser", "COMMENTED", "2026-10-18T11:00:00Z", 10)],
+  });
+  assert.deepEqual(beforeApproval.request, []);
+
+  const afterApproval = await planReviewRequests({
+    ...base,
+    reviews: [review("DevUser", "APPROVED", "2026-10-18T11:00:00Z", 10)],
+  });
+  assert.deepEqual(afterApproval.request, [
+    { label: "Affects Balance", reviewer: balanceTeam, when: "afterApproval", approvedBy: "DevUser" },
+  ]);
+  assert.equal(
+    formatReviewRequest(afterApproval.request[0]),
+    'Requested review from teams/balance-team because "Affects Balance" is on the PR and @DevUser approved.',
+  );
+});
+
+test("planReviewRequests skips the request when a reviewer team member already approved", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }, { name: "Requires Admin" }],
+    reviews: [
+      review("DevAndBalance", "APPROVED", "2026-10-18T11:00:00Z", 10),
+      review("AdminUser", "APPROVED", "2026-10-18T11:05:00Z", 11),
+    ],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan, { request: [], withdraw: [] });
+});
+
+test("planReviewRequests ignores approvals that were later dismissed or replaced", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }],
+    reviews: [
+      review("DevUser", "APPROVED", "2026-10-18T11:00:00Z", 10),
+      review("DevUser", "DISMISSED", "2026-10-18T12:00:00Z", 11),
+    ],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan.request, []);
+});
+
+test("planReviewRequests only counts approvals from approvedBy when it is set", async () => {
+  const config = reviewRequestConfig([
+    { label: "Affects Balance", reviewer: balanceTeam, when: "afterApproval", approvedBy: [developersTeam] },
+  ]);
+  const base = {
+    config,
+    prLabels: [{ name: "Affects Balance" }],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  };
+
+  const outsider = await planReviewRequests({
+    ...base,
+    reviews: [review("RandomUser", "APPROVED", "2026-10-18T11:00:00Z", 10)],
+  });
+  assert.deepEqual(outsider.request, []);
+
+  const developer = await planReviewRequests({
+    ...base,
+    reviews: [
+      review("RandomUser", "APPROVED", "2026-10-18T11:00:00Z", 10),
+      review("DevUser", "APPROVED", "2026-10-18T10:00:00Z", 11),
+    ],
+  });
+  assert.equal(developer.request[0].approvedBy, "DevUser");
+});
+
+test("planReviewRequests does not request again after a request at or after the anchor", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }, { name: "Requires Admin" }],
+    reviews: [review("DevUser", "APPROVED", "2026-10-18T11:00:00Z", 10)],
+    labelEvents: [
+      labelEvent("labeled", "Requires Admin", "Contributor", "2026-10-18T10:00:00Z", 1),
+      labelEvent("labeled", "Affects Balance", "Contributor", "2026-10-18T10:00:00Z", 2),
+      reviewRequestedEvent({ team: "admin", requester: "label-sync-app[bot]", createdAt: "2026-10-18T10:00:05Z", id: 3 }),
+      reviewRequestedEvent({ team: "balance-team", requester: "label-sync-app[bot]", createdAt: "2026-10-18T11:00:05Z", id: 4 }),
+    ],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan, { request: [], withdraw: [] });
+});
+
+test("planReviewRequests requests again after a newer outside approval or a re-added label", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }, { name: "Requires Admin" }],
+    reviews: [review("DevUser", "APPROVED", "2026-10-18T14:00:00Z", 10)],
+    labelEvents: [
+      labelEvent("labeled", "Requires Admin", "Contributor", "2026-10-18T10:00:00Z", 1),
+      reviewRequestedEvent({ team: "admin", requester: "label-sync-app[bot]", createdAt: "2026-10-18T10:00:05Z", id: 2 }),
+      labelEvent("unlabeled", "Requires Admin", "Contributor", "2026-10-18T12:00:00Z", 3),
+      labelEvent("labeled", "Requires Admin", "Contributor", "2026-10-18T13:00:00Z", 4),
+      reviewRequestedEvent({ team: "balance-team", requester: "label-sync-app[bot]", createdAt: "2026-10-18T11:00:05Z", id: 5 }),
+    ],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan.request.map((request) => request.reviewer.value), ["teams/admin", "teams/balance-team"]);
+});
+
+test("planReviewRequests skips pending reviewers, draft PRs, ignored authors and the PR author", async () => {
+  const userEntry = [{ label: "Requires Admin", reviewer: { type: "user", login: "Contributor", value: "Contributor" }, when: "labeled", approvedBy: [] }];
+  const base = {
+    prLabels: [{ name: "Requires Admin" }],
+    reviews: [],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  };
+
+  const pending = await planReviewRequests({
+    ...base,
+    config: reviewRequestConfig(reviewRequestEntries),
+    pendingReviewers: { users: [], teams: ["Admin"] },
+  });
+  const draft = await planReviewRequests({ ...base, config: reviewRequestConfig(reviewRequestEntries), isDraft: true });
+  const ignored = await planReviewRequests({
+    ...base,
+    config: { ...reviewRequestConfig(reviewRequestEntries), ignoredPullRequestAuthors: ["contributor"] },
+  });
+  const author = await planReviewRequests({ ...base, config: reviewRequestConfig(userEntry) });
+
+  for (const plan of [pending, draft, ignored, author]) {
+    assert.deepEqual(plan, { request: [], withdraw: [] });
+  }
+});
+
+test("planReviewRequests requests a reviewer shared by two present labels only once", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig([
+      { label: "Requires Admin", reviewer: adminTeam, when: "labeled", approvedBy: [] },
+      { label: "Security", reviewer: adminTeam, when: "labeled", approvedBy: [] },
+    ]),
+    prLabels: [{ name: "Requires Admin" }, { name: "Security" }],
+    reviews: [],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.equal(plan.request.length, 1);
+});
+
+test("planReviewRequests withdraws a pending request that Label Sync made once the label is removed", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [],
+    reviews: [],
+    labelEvents: [
+      labelEvent("labeled", "Requires Admin", "Contributor", "2026-10-18T10:00:00Z", 1),
+      reviewRequestedEvent({ team: "admin", requester: "label-sync-app[bot]", createdAt: "2026-10-18T10:00:05Z", id: 2 }),
+      labelEvent("unlabeled", "Requires Admin", "Contributor", "2026-10-18T11:00:00Z", 3),
+    ],
+    pendingReviewers: { users: [], teams: ["admin"] },
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+    isAutomationActor: isLabelSync,
+  });
+
+  assert.deepEqual(plan, { request: [], withdraw: [{ label: "Requires Admin", reviewer: adminTeam }] });
+  assert.equal(
+    formatReviewWithdrawal(plan.withdraw[0]),
+    'Withdrew the review request for teams/admin because "Requires Admin" was removed.',
+  );
+});
+
+test("planReviewRequests leaves requests made by people or still needed by another label", async () => {
+  const humanRequest = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [],
+    reviews: [],
+    labelEvents: [
+      reviewRequestedEvent({ team: "admin", requester: "label-sync-app[bot]", createdAt: "2026-10-18T10:00:05Z", id: 1 }),
+      reviewRequestedEvent({ team: "admin", requester: "SomeMaintainer", createdAt: "2026-10-18T10:30:00Z", id: 2 }),
+    ],
+    pendingReviewers: { users: [], teams: ["admin"] },
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+    isAutomationActor: isLabelSync,
+  });
+  assert.deepEqual(humanRequest.withdraw, []);
+
+  const sharedReviewer = await planReviewRequests({
+    config: reviewRequestConfig([
+      { label: "Requires Admin", reviewer: adminTeam, when: "labeled", approvedBy: [] },
+      { label: "Security", reviewer: adminTeam, when: "afterApproval", approvedBy: [] },
+    ]),
+    prLabels: [{ name: "Security" }],
+    reviews: [],
+    labelEvents: [
+      reviewRequestedEvent({ team: "admin", requester: "label-sync-app[bot]", createdAt: "2026-10-18T10:00:05Z", id: 1 }),
+    ],
+    pendingReviewers: { users: [], teams: ["admin"] },
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+    isAutomationActor: isLabelSync,
+  });
+  assert.deepEqual(sharedReviewer, { request: [], withdraw: [] });
+});
+
+test("planReviewRequests does nothing when no review requests are configured", async () => {
+  const plan = await planReviewRequests({
+    config: emptyConfig,
+    prLabels: [{ name: "Requires Admin" }],
+    reviews: [],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan, { request: [], withdraw: [] });
 });

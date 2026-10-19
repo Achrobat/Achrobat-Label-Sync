@@ -462,7 +462,85 @@ function validateLabelMember(value, { configKey, role, allowBotLogins = false })
   };
 }
 
+// A member field can hold one user or team, a comma-separated list such as "teams/admin, UltraProdigy",
+// or an array of either. Empty items, for example from a trailing comma, are ignored, but at least one
+// member is required.
+function splitLabelMemberList(value, { configKey, role }) {
+  const values = Array.isArray(value) ? value : [value];
+  const members = [];
+
+  for (const item of values) {
+    assert(typeof item === "string" && item.trim(), `${configKey} ${role} must be a non-empty string.`);
+    members.push(...item.split(",").map((part) => part.trim()).filter(Boolean));
+  }
+
+  assert(members.length > 0, `${configKey} ${role} must be a non-empty string.`);
+  return members;
+}
+
 function validateLabelMemberEntries(entries, { configKey, role, allowBotLogins = false }) {
+  assert(
+    Array.isArray(entries),
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`,
+  );
+
+  const seen = new Set();
+
+  // Entries listing several members are expanded to one validated entry per member, so the rest of
+  // Label Test keeps working with a single member per entry.
+  return entries.flatMap((entry, index) => {
+    assert(
+      entry && typeof entry === "object" && !Array.isArray(entry),
+      `${configKey} entry at index ${index} must be an object.`,
+    );
+    assert(
+      typeof entry.label === "string" && entry.label.trim(),
+      `${configKey} entry at index ${index} must include a non-empty label.`,
+    );
+
+    const label = entry.label.trim();
+
+    return splitLabelMemberList(entry[role], { configKey, role }).map((value) => {
+      const member = validateLabelMember(value, { configKey, role, allowBotLogins });
+      const key = `${normalizeName(label)}\0${normalizeName(member.value)}`;
+      assert(
+        !seen.has(key),
+        `Duplicate ${configKey} entry detected: "${label}" with ${role} "${member.value}".`,
+      );
+      seen.add(key);
+
+      return {
+        label,
+        [role]: member,
+      };
+    });
+  });
+}
+
+function validateProtectedLabelApprovals(entries) {
+  return validateLabelMemberEntries(entries, {
+    configKey: "protectedLabelApprovals",
+    role: "approver",
+  });
+}
+
+// Sticky label removers may include GitHub App bot logins such as "label-sync-app[bot]" so an
+// automation identity (for example the Remove-Labels workflow token) can be allowed to remove them.
+function validateStickyLabels(entries) {
+  return validateLabelMemberEntries(entries, {
+    configKey: "stickyLabels",
+    role: "remover",
+    allowBotLogins: true,
+  });
+}
+
+const REVIEW_REQUEST_TIMINGS = new Set(["labeled", "afterApproval"]);
+
+// Review requests ask a user or team to review a PR that has the label. "labeled" requests as soon as the
+// label is present; "afterApproval" waits for an approval from someone who is not the reviewer (or not on
+// the reviewer team), optionally limited to approvals from the "approvedBy" users or teams.
+function validateReviewRequests(entries) {
+  const configKey = "reviewRequests";
   assert(
     Array.isArray(entries),
     `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`,
@@ -481,35 +559,53 @@ function validateLabelMemberEntries(entries, { configKey, role, allowBotLogins =
     );
 
     const label = entry.label.trim();
-    const member = validateLabelMember(entry[role], { configKey, role, allowBotLogins });
-    const key = `${normalizeName(label)}\0${normalizeName(member.value)}`;
+    const reviewer = validateLabelMember(entry.reviewer, { configKey, role: "reviewer" });
+    const when = entry.when ?? "labeled";
+    assert(
+      REVIEW_REQUEST_TIMINGS.has(when),
+      `${configKey} entry "${label}" field "when" must be "labeled" or "afterApproval".`,
+    );
+
+    let approvedBy = [];
+
+    if (entry.approvedBy !== undefined) {
+      assert(
+        when === "afterApproval",
+        `${configKey} entry "${label}" field "approvedBy" can only be used with "when": "afterApproval".`,
+      );
+
+      assert(
+        typeof entry.approvedBy === "string" || Array.isArray(entry.approvedBy),
+        `${configKey} entry "${label}" field "approvedBy" must be a user, a "teams/<slug>" team, or a list of them.`,
+      );
+
+      const values = splitLabelMemberList(entry.approvedBy, { configKey, role: "approvedBy" });
+      const seenApprovers = new Set();
+      approvedBy = values.map((value) => {
+        const member = validateLabelMember(value, { configKey, role: "approvedBy" });
+        const memberKey = normalizeName(member.value);
+        assert(
+          !seenApprovers.has(memberKey),
+          `${configKey} entry "${label}" lists approvedBy "${member.value}" more than once.`,
+        );
+        seenApprovers.add(memberKey);
+        return member;
+      });
+    }
+
+    const key = `${normalizeName(label)}\0${normalizeName(reviewer.value)}`;
     assert(
       !seen.has(key),
-      `Duplicate ${configKey} entry detected: "${label}" with ${role} "${member.value}".`,
+      `Duplicate ${configKey} entry detected: "${label}" with reviewer "${reviewer.value}".`,
     );
     seen.add(key);
 
     return {
       label,
-      [role]: member,
+      reviewer,
+      when,
+      approvedBy,
     };
-  });
-}
-
-function validateProtectedLabelApprovals(entries) {
-  return validateLabelMemberEntries(entries, {
-    configKey: "protectedLabelApprovals",
-    role: "approver",
-  });
-}
-
-// Sticky label removers may include GitHub App bot logins such as "label-sync-app[bot]" so an
-// automation identity (for example the Remove-Labels workflow token) can be allowed to remove them.
-function validateStickyLabels(entries) {
-  return validateLabelMemberEntries(entries, {
-    configKey: "stickyLabels",
-    role: "remover",
-    allowBotLogins: true,
   });
 }
 
@@ -543,6 +639,7 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
     stickyLabels: validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []),
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
+    reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
     workflowDistribution: {
       whitelist: validateRepositoryEntries(
         workflowDistribution.whitelist ?? [],

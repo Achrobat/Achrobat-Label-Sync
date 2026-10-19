@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assert, normalizeRepositoryRef, readJsonc } from "./lib/config-utils.mjs";
+import { toJobSummaryMarkdown } from "./lib/changelog-utils.mjs";
 import {
   validateLabelTestWorkflowConfig,
   validateProperties,
@@ -975,7 +976,7 @@ async function writeRunSummary(markdown) {
     return;
   }
 
-  await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, markdown, "utf8");
+  await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, toJobSummaryMarkdown(markdown), "utf8");
   console.log("Wrote distribution summary to the GitHub Actions job summary.");
 }
 

@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { renderLabelSyncSection, renderRemoveLabelsSection, writeChangelog } from "../scripts/lib/changelog-utils.mjs";
+import {
+  renderLabelSyncSection,
+  renderRemoveLabelsSection,
+  toJobSummaryMarkdown,
+  writeChangelog,
+} from "../scripts/lib/changelog-utils.mjs";
 import { renderInventorySummary } from "../scripts/inventory-labels.mjs";
 
 test("writeChangelog still writes a summary when nothing changed", async () => {
@@ -93,7 +98,7 @@ test("writeChangelog appends unchanged Markdown formatting to the GitHub step su
     assert.doesNotMatch(summary, /Workflow Run:/);
     assert.match(summary, /- \*\*Actor:\*\* octocat\n/);
     assert.match(summary, /- \*\*Test Mode:\*\* True\n/);
-    assert.match(summary, /\n## Changed Repositories\n\n### \[example\/repo\]\(https:\/\/github.com\/example\/repo\)\n\n/);
+    assert.match(summary, /\n## Changed Repositories\n\n### \[example\/repo\]\(\/example\/repo\)\n\n/);
     assert.match(summary, /Created labels:\n- Created `status: ready` \(#0e8a16\): Ready to merge\n\n$/);
     await assert.rejects(fs.stat(path.join(workspace, "changelogs")), { code: "ENOENT" });
   } finally {
@@ -242,8 +247,8 @@ test("writeChangelog includes skipped repositories and failure details when prov
     });
 
     const summary = await fs.readFile(summaryPath, "utf8");
-    assert.match(summary, /## Changed Repositories\n\n### \[example\/changed\]\(https:\/\/github.com\/example\/changed\)\n\n/);
-    assert.match(summary, /## Skipped Repositories\n\n- \[example\/archive\]\(https:\/\/github.com\/example\/archive\) - archived\n- \[example\/read-only\]\(https:\/\/github.com\/example\/read-only\) - read-only\n\n/);
+    assert.match(summary, /## Changed Repositories\n\n### \[example\/changed\]\(\/example\/changed\)\n\n/);
+    assert.match(summary, /## Skipped Repositories\n\n- \[example\/archive\]\(\/example\/archive\) - archived\n- \[example\/read-only\]\(\/example\/read-only\) - read-only\n\n/);
     assert.match(summary, /## Workflow Failure\n\n- PATCH \/repos\/example\/broken\/labels\/bug failed with 500\n$/);
   } finally {
     process.chdir(originalCwd);
@@ -481,4 +486,33 @@ test("renderRemoveLabelsSection includes a per-repository affected count summary
 
   assert.equal(section.lines[0], "Removed labels:");
   assert.equal(section.lines[1], "- Removed `bug` (2 PRs, 1 Issue affected)");
+});
+
+test("toJobSummaryMarkdown writes server links as root-relative paths so secret masking cannot break them", () => {
+  const markdown = [
+    "### [GTNewHorizons/nei-recipe-panels](https://github.com/GTNewHorizons/nei-recipe-panels)",
+    "- [#7](https://github.com/example/repo/issues/7) and [PR](HTTPS://GitHub.com/example/repo/pull/3)",
+    "- [Docs](https://docs.github.com/actions) stays absolute",
+    "- Plain text https://github.com/example/repo is left alone",
+  ].join("\n");
+
+  assert.equal(
+    toJobSummaryMarkdown(markdown, { serverUrl: "https://github.com/" }),
+    [
+      "### [GTNewHorizons/nei-recipe-panels](/GTNewHorizons/nei-recipe-panels)",
+      "- [#7](/example/repo/issues/7) and [PR](/example/repo/pull/3)",
+      "- [Docs](https://docs.github.com/actions) stays absolute",
+      "- Plain text https://github.com/example/repo is left alone",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(toJobSummaryMarkdown(markdown, { serverUrl: "https://github.com" }), /\]\(https:\/\/github\.com/i);
+});
+
+test("toJobSummaryMarkdown uses the configured GitHub Enterprise server URL", () => {
+  assert.equal(
+    toJobSummaryMarkdown("[repo](https://git.example.com/org/repo) [other](https://github.com/org/repo)", {
+      serverUrl: "https://git.example.com",
+    }),
+    "[repo](/org/repo) [other](https://github.com/org/repo)",
+  );
 });

@@ -259,14 +259,17 @@ function joinWithOr(values) {
   return `${values.slice(0, -1).join(", ")}, or ${values.at(-1)}`;
 }
 
-// Hidden marker used to post the sticky label notice only once per label on each pull request.
-export function stickyLabelCommentMarker(label) {
-  return `<!-- label-sync:sticky-label:${encodeURIComponent(normalizeName(label))} -->`;
+function stickyLabelNoticePrefix(label) {
+  return `The **${label}** label is sticky`;
 }
 
+// The notice is posted only once per label on each pull request. Earlier notices are recognized by their
+// opening text, ignoring case, so changing the configured removers does not cause a second notice.
 export function hasStickyLabelComment(comments, label) {
-  const marker = stickyLabelCommentMarker(label);
-  return (comments ?? []).some((comment) => typeof comment?.body === "string" && comment.body.includes(marker));
+  const prefix = stickyLabelNoticePrefix(label).toLowerCase();
+  return (comments ?? []).some(
+    (comment) => typeof comment?.body === "string" && comment.body.toLowerCase().includes(prefix),
+  );
 }
 
 // Builds one comment for the restored labels that have not been announced on this pull request yet.
@@ -291,10 +294,7 @@ export function buildStickyLabelComment(restorations, comments) {
   }
 
   return pending
-    .map((restoration) => [
-      stickyLabelCommentMarker(restoration.label),
-      `The **${restoration.label}** label is sticky and can only be removed by ${joinWithOr(restoration.removers.map(describeRemover))}.`,
-    ].join("\n"))
+    .map((restoration) => `${stickyLabelNoticePrefix(restoration.label)} and can only be removed by ${joinWithOr(restoration.removers.map(describeRemover))}.`)
     .join("\n\n");
 }
 
@@ -363,4 +363,252 @@ export async function evaluatePrLabelTest({
     passed: failures.length === 0,
     failures,
   };
+}
+
+function reviewerKey(member) {
+  return member.type === "team" ? `team:${normalizeName(member.slug)}` : `user:${normalizeName(member.login)}`;
+}
+
+function timelineReviewerKey(event) {
+  if (typeof event?.requested_team?.slug === "string") {
+    return `team:${normalizeName(event.requested_team.slug)}`;
+  }
+
+  if (typeof event?.requested_reviewer?.login === "string") {
+    return `user:${normalizeName(event.requested_reviewer.login)}`;
+  }
+
+  return null;
+}
+
+function latestApprovedReviews(reviews) {
+  const latest = new Map();
+
+  for (const review of reviews ?? []) {
+    const login = review?.user?.login;
+
+    if (!login || typeof review.state !== "string") {
+      continue;
+    }
+
+    const key = normalizeName(login);
+    const previous = latest.get(key);
+
+    if (
+      !previous
+      || reviewTime(review) > reviewTime(previous)
+      || (reviewTime(review) === reviewTime(previous) && reviewId(review) > reviewId(previous))
+    ) {
+      latest.set(key, review);
+    }
+  }
+
+  return [...latest.values()]
+    .filter((review) => review.state === "APPROVED")
+    .map((review) => ({ login: review.user.login, submittedAt: reviewTime(review) }));
+}
+
+function latestLabeledTime(labelEvents, labelKey) {
+  let latest = 0;
+
+  for (const event of labelEvents ?? []) {
+    if (
+      event?.event === "labeled"
+      && typeof event.label?.name === "string"
+      && normalizeName(event.label.name) === labelKey
+    ) {
+      latest = Math.max(latest, eventTime(event));
+    }
+  }
+
+  return latest;
+}
+
+function reviewRequestEvents(labelEvents) {
+  const byReviewer = new Map();
+
+  for (const event of labelEvents ?? []) {
+    if (event?.event !== "review_requested") {
+      continue;
+    }
+
+    const key = timelineReviewerKey(event);
+
+    if (key === null) {
+      continue;
+    }
+
+    const events = byReviewer.get(key) ?? [];
+    events.push(event);
+    byReviewer.set(key, events);
+  }
+
+  for (const events of byReviewer.values()) {
+    events.sort((left, right) => eventTime(left) - eventTime(right) || eventId(left) - eventId(right));
+  }
+
+  return byReviewer;
+}
+
+export function describeReviewer(member) {
+  return member.type === "team" ? `teams/${member.slug}` : member.login;
+}
+
+// Decides which review requests Label Test should make or withdraw. The decision only looks at the
+// current pull request state (labels, latest reviews, pending requests and the issue timeline), so it
+// gives the same answer whether it runs from a label event, a review-triggered rerun or a new push.
+//
+// A reviewer is requested once per "anchor": the latest time the label was applied, and for
+// "afterApproval" entries also the newest approval that triggers the request. If the timeline already
+// shows a review request for that reviewer at or after the anchor, nothing is requested again. That keeps
+// Label Test from re-requesting a team after GitHub clears the request when a member reviews, and from
+// overriding a person who removed the request by hand.
+//
+// When the label is gone, a still-pending request is withdrawn only if Label Sync made it and no label
+// that is still present maps to the same reviewer.
+export async function planReviewRequests({
+  config,
+  prLabels,
+  reviews,
+  labelEvents,
+  pendingReviewers = { users: [], teams: [] },
+  pullRequestAuthor,
+  isDraft = false,
+  isTeamMember,
+  isAutomationActor = async () => false,
+}) {
+  const plan = { request: [], withdraw: [] };
+  const entries = config.reviewRequests ?? [];
+
+  if (entries.length === 0 || isIgnoredPullRequestAuthor(config, pullRequestAuthor)) {
+    return plan;
+  }
+
+  const presentLabels = labelNames(prLabels);
+  const pending = new Set([
+    ...(pendingReviewers.users ?? []).map((login) => `user:${normalizeName(login)}`),
+    ...(pendingReviewers.teams ?? []).map((slug) => `team:${normalizeName(slug)}`),
+  ]);
+  const requestEvents = reviewRequestEvents(labelEvents);
+  const approvals = latestApprovedReviews(reviews);
+  const retainedReviewers = new Set();
+  const plannedRequests = new Set();
+
+  for (const entry of entries) {
+    const labelKey = normalizeName(entry.label);
+
+    if (!presentLabels.has(labelKey)) {
+      continue;
+    }
+
+    const key = reviewerKey(entry.reviewer);
+    retainedReviewers.add(key);
+
+    if (isDraft || plannedRequests.has(key) || pending.has(key)) {
+      continue;
+    }
+
+    if (
+      entry.reviewer.type === "user"
+      && typeof pullRequestAuthor === "string"
+      && normalizeName(entry.reviewer.login) === normalizeName(pullRequestAuthor)
+    ) {
+      continue;
+    }
+
+    let hasQualifyingApproval = false;
+    const outsideApprovals = [];
+
+    for (const approval of approvals) {
+      if (await isAuthorizedMember([entry.reviewer], approval.login, isTeamMember)) {
+        hasQualifyingApproval = true;
+        break;
+      }
+
+      outsideApprovals.push(approval);
+    }
+
+    if (hasQualifyingApproval) {
+      continue;
+    }
+
+    let anchor = latestLabeledTime(labelEvents, labelKey);
+    let triggeredBy = null;
+
+    if (entry.when === "afterApproval") {
+      for (const approval of outsideApprovals) {
+        if (
+          entry.approvedBy.length > 0
+          && !(await isAuthorizedMember(entry.approvedBy, approval.login, isTeamMember))
+        ) {
+          continue;
+        }
+
+        if (triggeredBy === null || approval.submittedAt > triggeredBy.submittedAt) {
+          triggeredBy = approval;
+        }
+      }
+
+      if (triggeredBy === null) {
+        continue;
+      }
+
+      anchor = Math.max(anchor, triggeredBy.submittedAt);
+    }
+
+    const alreadyRequested = (requestEvents.get(key) ?? []).some((event) => eventTime(event) >= anchor);
+
+    if (alreadyRequested) {
+      continue;
+    }
+
+    plannedRequests.add(key);
+    plan.request.push({
+      label: presentLabels.get(labelKey),
+      reviewer: entry.reviewer,
+      when: entry.when,
+      approvedBy: triggeredBy?.login ?? null,
+    });
+  }
+
+  const withdrawn = new Set();
+
+  for (const entry of entries) {
+    const key = reviewerKey(entry.reviewer);
+
+    if (
+      presentLabels.has(normalizeName(entry.label))
+      || retainedReviewers.has(key)
+      || withdrawn.has(key)
+      || !pending.has(key)
+    ) {
+      continue;
+    }
+
+    const latestRequest = (requestEvents.get(key) ?? []).at(-1);
+    const requester = latestRequest?.review_requester?.login ?? latestRequest?.actor?.login;
+
+    if (!requester || !(await isAutomationActor(requester))) {
+      continue;
+    }
+
+    withdrawn.add(key);
+    plan.withdraw.push({
+      label: entry.label,
+      reviewer: entry.reviewer,
+    });
+  }
+
+  return plan;
+}
+
+export function formatReviewRequest(request) {
+  const reason = request.when === "afterApproval" && request.approvedBy
+    ? `"${request.label}" is on the PR and @${request.approvedBy} approved`
+    : `"${request.label}" is on the PR`;
+  return `Requested review from ${describeReviewer(request.reviewer)} because ${reason}.`;
+}
+
+export function formatReviewWithdrawal(withdrawal) {
+  return `Withdrew the review request for ${describeReviewer(withdrawal.reviewer)} because "${withdrawal.label}" was removed.`;
 }

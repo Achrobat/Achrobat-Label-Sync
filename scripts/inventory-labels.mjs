@@ -22,7 +22,7 @@ import {
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
-import { getWorkflowMetadata } from "./lib/changelog-utils.mjs";
+import { getWorkflowMetadata, toJobSummaryMarkdown } from "./lib/changelog-utils.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -337,7 +337,7 @@ async function writeInventorySummary(markdown) {
     return null;
   }
 
-  await fs.appendFile(stepSummaryPath, markdown, "utf8");
+  await fs.appendFile(stepSummaryPath, toJobSummaryMarkdown(markdown), "utf8");
   console.log("Wrote label inventory to the GitHub Actions job summary.");
   return stepSummaryPath;
 }
