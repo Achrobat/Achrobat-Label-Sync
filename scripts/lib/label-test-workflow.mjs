@@ -405,7 +405,11 @@ function latestApprovedReviews(reviews) {
 
   return [...latest.values()]
     .filter((review) => review.state === "APPROVED")
-    .map((review) => ({ login: review.user.login, submittedAt: reviewTime(review) }));
+    .map((review) => ({
+      login: review.user.login,
+      association: typeof review.author_association === "string" ? review.author_association : null,
+      submittedAt: reviewTime(review),
+    }));
 }
 
 function latestLabeledTime(labelEvents, labelKey) {
@@ -464,6 +468,9 @@ export function describeReviewer(member) {
 // Label Test from re-requesting a team after GitHub clears the request when a member reviews, and from
 // overriding a person who removed the request by hand.
 //
+// Only approvals from people with write access to the repository can trigger an "afterApproval" request,
+// so an approval from someone outside the organization does not pull in the reviewer team.
+//
 // When the label is gone, a still-pending request is withdrawn only if Label Sync made it and no label
 // that is still present maps to the same reviewer.
 export async function planReviewRequests({
@@ -476,6 +483,7 @@ export async function planReviewRequests({
   isDraft = false,
   isTeamMember,
   isAutomationActor = async () => false,
+  hasWriteAccess = async () => false,
 }) {
   const plan = { request: [], withdraw: [] };
   const entries = config.reviewRequests ?? [];
@@ -541,6 +549,10 @@ export async function planReviewRequests({
           entry.approvedBy.length > 0
           && !(await isAuthorizedMember(entry.approvedBy, approval.login, isTeamMember))
         ) {
+          continue;
+        }
+
+        if (!(await hasWriteAccess(approval.login, approval.association))) {
           continue;
         }
 

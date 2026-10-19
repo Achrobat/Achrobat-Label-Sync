@@ -146,12 +146,14 @@ const configDefaults = {
 
   // Review requests ask a user or team to review a PR that has the label. "when" picks the timing:
   //   "labeled" (default): request the reviewer as soon as the label is on the PR.
-  //   "afterApproval": wait until someone who is not the reviewer (and not on the reviewer team) approves,
-  //   then request the reviewer. If the reviewer has already approved, nothing is requested.
+  //   "afterApproval": wait until someone with write access to the repository, who is not the reviewer (and
+  //   not on the reviewer team), approves, then request the reviewer. Approvals from people without write
+  //   access, such as contributors outside the organization, never count. If the reviewer has already
+  //   approved, nothing is requested.
   // "approvedBy" (optional, afterApproval only) sets which approvals count in order to trigger the request,
-  // as a comma-separated list of users or teams. Leave it out and any approval from outside the reviewer
-  // team triggers it. It only affects the request, not whether Label Test passes; that is
-  // protectedLabelApprovals.
+  // as a comma-separated list of users or teams; they still need write access. Leave it out and any approval
+  // from someone with write access outside the reviewer team triggers it. It only affects the request, not
+  // whether Label Test passes; that is protectedLabelApprovals.
   // Nothing is requested on draft PRs. Each reviewer is requested once per label application or new
   // triggering approval, so a request removed by hand stays removed. If the label is removed, a pending
   // request made by Label Sync is withdrawn. Team reviewers need the configured PAT or GitHub App token,

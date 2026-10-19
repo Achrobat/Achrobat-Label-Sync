@@ -537,8 +537,9 @@ function validateStickyLabels(entries) {
 const REVIEW_REQUEST_TIMINGS = new Set(["labeled", "afterApproval"]);
 
 // Review requests ask a user or team to review a PR that has the label. "labeled" requests as soon as the
-// label is present; "afterApproval" waits for an approval from someone who is not the reviewer (or not on
-// the reviewer team). "approvedBy" optionally sets which approvals count in order to trigger the request.
+// label is present; "afterApproval" waits for an approval from someone with write access who is not the
+// reviewer (or not on the reviewer team). "approvedBy" optionally sets which approvals count in order to
+// trigger the request.
 function validateReviewRequests(entries) {
   const configKey = "reviewRequests";
   assert(

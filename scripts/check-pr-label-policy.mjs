@@ -289,6 +289,35 @@ function createTeamMembershipChecker(token, orgName) {
   };
 }
 
+// GitHub records each reviewer's relationship to the repository on the review. Only owners, organization
+// members and collaborators can have write access, so anyone else is rejected without an API call. For the
+// rest, the repository permission decides: admin, maintain and write count, triage and read do not.
+const ASSOCIATIONS_THAT_MAY_HAVE_WRITE_ACCESS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+function createWriteAccessChecker(token, repository) {
+  const cache = new Map();
+
+  return async (login, association) => {
+    if (typeof association === "string" && !ASSOCIATIONS_THAT_MAY_HAVE_WRITE_ACCESS.has(association)) {
+      return false;
+    }
+
+    const key = normalizeName(login);
+
+    if (!cache.has(key)) {
+      cache.set(key, githubRequest(
+        token,
+        "GET",
+        `/repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`,
+        null,
+        { allowNotFound: true },
+      ).then((result) => result?.permission === "admin" || result?.permission === "write"));
+    }
+
+    return cache.get(key);
+  };
+}
+
 function describeReviewRequestFailure(reviewer, error) {
   const hint = reviewer.type === "team" && (error.status === 403 || error.status === 404 || error.status === 422)
     ? " Team review requests need the configured PAT or GitHub App token, and the team must have access to this repository."
@@ -335,6 +364,7 @@ async function applyReviewRequests({
       isDraft: pullRequest?.draft === true,
       isTeamMember,
       isAutomationActor: createReviewRequesterChecker(isAutomationActor),
+      hasWriteAccess: createWriteAccessChecker(token, targetRepository),
     });
   } catch (error) {
     console.log(`::warning title=Review requests skipped::${escapeWorkflowCommand(error.message)}`);
