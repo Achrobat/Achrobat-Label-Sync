@@ -7,10 +7,14 @@ import {
 } from "./lib/config-validation.mjs";
 import {
   buildStickyLabelComment,
+  describeReviewer,
   evaluatePrLabelTest,
   findStickyLabelsToRestore,
+  formatReviewRequest,
+  formatReviewWithdrawal,
   formatStickyRestoration,
   isIgnoredPullRequestAuthor,
+  planReviewRequests,
 } from "./lib/label-test-workflow.mjs";
 
 const workspaceRoot = process.cwd();
@@ -36,7 +40,9 @@ async function githubRequest(token, method, apiPath, body, { allowNotFound = fal
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(`${method} ${apiPath} failed with ${response.status}: ${message}`);
+    const error = new Error(`${method} ${apiPath} failed with ${response.status}: ${message}`);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -75,6 +81,44 @@ async function addPullRequestLabels(token, repository, pullRequestNumber, labels
   return githubRequest(token, "POST", `/repos/${repository}/issues/${pullRequestNumber}/labels`, { labels });
 }
 
+async function getPullRequest(token, repository, pullRequestNumber) {
+  return githubRequest(token, "GET", `/repos/${repository}/pulls/${pullRequestNumber}`);
+}
+
+function reviewerRequestBody(reviewer) {
+  return reviewer.type === "team"
+    ? { reviewers: [], team_reviewers: [reviewer.slug] }
+    : { reviewers: [reviewer.login], team_reviewers: [] };
+}
+
+async function requestPullRequestReviewer(token, repository, pullRequestNumber, reviewer) {
+  return githubRequest(
+    token,
+    "POST",
+    `/repos/${repository}/pulls/${pullRequestNumber}/requested_reviewers`,
+    reviewerRequestBody(reviewer),
+  );
+}
+
+async function removePullRequestReviewer(token, repository, pullRequestNumber, reviewer) {
+  return githubRequest(
+    token,
+    "DELETE",
+    `/repos/${repository}/pulls/${pullRequestNumber}/requested_reviewers`,
+    reviewerRequestBody(reviewer),
+  );
+}
+
+// The issue events timeline is shared by sticky labels and review requests, so it is fetched at most once
+// per run and only when one of them needs it.
+function createIssueEventsLoader(token, repository, pullRequestNumber) {
+  let eventsPromise = null;
+  return () => {
+    eventsPromise ??= getPullRequestIssueEvents(token, repository, pullRequestNumber);
+    return eventsPromise;
+  };
+}
+
 async function getPullRequestComments(token, repository, pullRequestNumber) {
   return getAllPages(token, `/repos/${repository}/issues/${pullRequestNumber}/comments`);
 }
@@ -110,6 +154,19 @@ function createAutomationActorChecker(token) {
     loginPromise ??= resolveLogin();
     const automationLogin = await loginPromise;
     return Boolean(automationLogin) && normalizeName(automationLogin) === normalizeName(login);
+  };
+}
+
+// Review requests made with the GITHUB_TOKEN fallback appear in the timeline as github-actions[bot], so that
+// login also counts as Label Sync when deciding whether a request is ours to withdraw. It is not added to
+// the sticky label checker, where it would let any workflow in the target repository remove sticky labels.
+function createReviewRequesterChecker(isAutomationActor) {
+  return async (login) => {
+    if (!process.env.LABEL_SYNC_TOKEN && normalizeName(login) === "github-actions[bot]") {
+      return true;
+    }
+
+    return isAutomationActor(login);
   };
 }
 
@@ -158,6 +215,8 @@ async function restoreStickyLabels({
   pullRequestIssue,
   labels,
   isTeamMember,
+  isAutomationActor,
+  loadIssueEvents,
 }) {
   if (config.stickyLabels.length === 0 || isIgnoredPullRequestAuthor(config, pullRequestIssue?.user?.login)) {
     return labels;
@@ -170,14 +229,14 @@ async function restoreStickyLabels({
     return labels;
   }
 
-  const labelEvents = await getPullRequestIssueEvents(token, targetRepository, pullRequestNumber);
+  const labelEvents = await loadIssueEvents();
   const restorations = await findStickyLabelsToRestore({
     config,
     prLabels: labels,
     labelEvents,
     triggeringEvent: readTriggeringLabelEvent(),
     isTeamMember,
-    isAutomationActor: createAutomationActorChecker(token),
+    isAutomationActor,
   });
 
   if (restorations.length === 0) {
@@ -230,6 +289,79 @@ function createTeamMembershipChecker(token, orgName) {
   };
 }
 
+function describeReviewRequestFailure(reviewer, error) {
+  const hint = reviewer.type === "team" && (error.status === 403 || error.status === 404 || error.status === 422)
+    ? " Team review requests need the configured PAT or GitHub App token, and the team must have access to this repository."
+    : "";
+  return `${describeReviewer(reviewer)}: ${error.message}${hint}`;
+}
+
+// Requests and withdraws reviewers for configured reviewRequests labels. Review requests are a
+// convenience, so every failure is reported as a warning and never changes the Label Test result.
+async function applyReviewRequests({
+  token,
+  config,
+  targetRepository,
+  pullRequestNumber,
+  pullRequestIssue,
+  labels,
+  reviews,
+  isTeamMember,
+  isAutomationActor,
+  loadIssueEvents,
+}) {
+  if (config.reviewRequests.length === 0 || isIgnoredPullRequestAuthor(config, pullRequestIssue?.user?.login)) {
+    return;
+  }
+
+  let plan;
+
+  try {
+    const [pullRequest, labelEvents] = await Promise.all([
+      getPullRequest(token, targetRepository, pullRequestNumber),
+      loadIssueEvents(),
+    ]);
+
+    plan = await planReviewRequests({
+      config,
+      prLabels: labels,
+      reviews,
+      labelEvents,
+      pendingReviewers: {
+        users: (pullRequest?.requested_reviewers ?? []).map((user) => user?.login).filter(Boolean),
+        teams: (pullRequest?.requested_teams ?? []).map((team) => team?.slug).filter(Boolean),
+      },
+      pullRequestAuthor: pullRequestIssue?.user?.login,
+      isDraft: pullRequest?.draft === true,
+      isTeamMember,
+      isAutomationActor: createReviewRequesterChecker(isAutomationActor),
+    });
+  } catch (error) {
+    console.log(`::warning title=Review requests skipped::${escapeWorkflowCommand(error.message)}`);
+    return;
+  }
+
+  for (const request of plan.request) {
+    try {
+      await requestPullRequestReviewer(token, targetRepository, pullRequestNumber, request.reviewer);
+      console.log(`::notice title=Review requested::${escapeWorkflowCommand(formatReviewRequest(request))}`);
+    } catch (error) {
+      const message = describeReviewRequestFailure(request.reviewer, error);
+      console.log(`::warning title=Review request failed::${escapeWorkflowCommand(message)}`);
+    }
+  }
+
+  for (const withdrawal of plan.withdraw) {
+    try {
+      await removePullRequestReviewer(token, targetRepository, pullRequestNumber, withdrawal.reviewer);
+      console.log(`::notice title=Review request withdrawn::${escapeWorkflowCommand(formatReviewWithdrawal(withdrawal))}`);
+    } catch (error) {
+      const message = describeReviewRequestFailure(withdrawal.reviewer, error);
+      console.log(`::warning title=Review request withdrawal failed::${escapeWorkflowCommand(message)}`);
+    }
+  }
+}
+
 function printEvaluation(result) {
   if (result.passed) {
     console.log("Label Test passed.");
@@ -265,6 +397,8 @@ async function main() {
 
   const pullRequestIssue = await getPullRequestIssue(token, targetRepository, pullRequestNumber);
   const isTeamMember = createTeamMembershipChecker(token, properties.organization);
+  const isAutomationActor = createAutomationActorChecker(token);
+  const loadIssueEvents = createIssueEventsLoader(token, targetRepository, pullRequestNumber);
   const labels = await restoreStickyLabels({
     token,
     config,
@@ -273,6 +407,8 @@ async function main() {
     pullRequestIssue,
     labels: Array.isArray(pullRequestIssue.labels) ? pullRequestIssue.labels : [],
     isTeamMember,
+    isAutomationActor,
+    loadIssueEvents,
   });
   const reviews = await getPullRequestReviews(token, targetRepository, pullRequestNumber);
   const result = await evaluatePrLabelTest({
@@ -285,6 +421,19 @@ async function main() {
   });
 
   printEvaluation(result);
+
+  await applyReviewRequests({
+    token,
+    config,
+    targetRepository,
+    pullRequestNumber,
+    pullRequestIssue,
+    labels,
+    reviews,
+    isTeamMember,
+    isAutomationActor,
+    loadIssueEvents,
+  });
 
   if (!result.passed) {
     process.exitCode = 1;

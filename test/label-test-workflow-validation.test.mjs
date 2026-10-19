@@ -206,3 +206,142 @@ test("validateLabelTestWorkflowConfig defaults stickyLabelComment to false and a
     /field "stickyLabelComment" must be true or false\./,
   );
 });
+
+test("validateLabelTestWorkflowConfig accepts review requests and defaults when to labeled", () => {
+  const config = validateLabelTestWorkflowConfig({
+    reviewRequests: [
+      { label: " Requires Admin ", reviewer: "teams/admin" },
+      { label: "Affects Balance", reviewer: "teams/balance-team", when: "afterApproval" },
+      { label: "Needs Art", reviewer: "ArtLead", when: "afterApproval", approvedBy: "teams/developers" },
+      { label: "Needs Art", reviewer: "teams/art", when: "afterApproval", approvedBy: ["teams/developers", "UltraProdigy"] },
+    ],
+  });
+
+  assert.deepEqual(config.reviewRequests, [
+    {
+      label: "Requires Admin",
+      reviewer: { type: "team", slug: "admin", value: "teams/admin" },
+      when: "labeled",
+      approvedBy: [],
+    },
+    {
+      label: "Affects Balance",
+      reviewer: { type: "team", slug: "balance-team", value: "teams/balance-team" },
+      when: "afterApproval",
+      approvedBy: [],
+    },
+    {
+      label: "Needs Art",
+      reviewer: { type: "user", login: "ArtLead", value: "ArtLead" },
+      when: "afterApproval",
+      approvedBy: [{ type: "team", slug: "developers", value: "teams/developers" }],
+    },
+    {
+      label: "Needs Art",
+      reviewer: { type: "team", slug: "art", value: "teams/art" },
+      when: "afterApproval",
+      approvedBy: [
+        { type: "team", slug: "developers", value: "teams/developers" },
+        { type: "user", login: "UltraProdigy", value: "UltraProdigy" },
+      ],
+    },
+  ]);
+  assert.deepEqual(validateLabelTestWorkflowConfig({}).reviewRequests, []);
+});
+
+test("validateLabelTestWorkflowConfig rejects invalid review requests", () => {
+  const cases = [
+    [{ reviewRequests: {} }, /field "reviewRequests" must contain an array\./],
+    [{ reviewRequests: [{ label: "Requires Admin" }] }, /reviewRequests reviewer must be a non-empty string\./],
+    [{ reviewRequests: [{ label: "", reviewer: "teams/admin" }] }, /reviewRequests entry at index 0 must include a non-empty label\./],
+    [{ reviewRequests: [{ label: "Requires Admin", reviewer: "my-app[bot]" }] }, /reviewRequests user reviewer "my-app\[bot\]" is not a valid GitHub username\./],
+    [{ reviewRequests: [{ label: "Requires Admin", reviewer: "teams/admin", when: "approved" }] }, /field "when" must be "labeled" or "afterApproval"\./],
+    [
+      { reviewRequests: [{ label: "Requires Admin", reviewer: "teams/admin", approvedBy: ["DevUser"] }] },
+      /field "approvedBy" can only be used with "when": "afterApproval"\./,
+    ],
+    [
+      { reviewRequests: [{ label: "Affects Balance", reviewer: "teams/balance", when: "afterApproval", approvedBy: { team: "dev" } }] },
+      /field "approvedBy" must be a user, a "teams\/<slug>" team, or a list of them\./,
+    ],
+    [
+      { reviewRequests: [{ label: "Affects Balance", reviewer: "teams/balance", when: "afterApproval", approvedBy: ["DevUser", "devuser"] }] },
+      /lists approvedBy "devuser" more than once\./,
+    ],
+    [
+      {
+        reviewRequests: [
+          { label: "Requires Admin", reviewer: "teams/admin" },
+          { label: "requires admin", reviewer: "teams/Admin", when: "afterApproval" },
+        ],
+      },
+      /Duplicate reviewRequests entry detected: "requires admin" with reviewer "teams\/Admin"\./,
+    ],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.throws(() => validateLabelTestWorkflowConfig(input), expected);
+  }
+});
+
+test("validateLabelTestWorkflowConfig expands comma-separated and array member lists", () => {
+  const config = validateLabelTestWorkflowConfig({
+    protectedLabelApprovals: [
+      { label: "Affects Balance", approver: "teams/admin, UltraProdigy" },
+      { label: "Requires Admin", approver: ["teams/admin", "OtherUser, ThirdUser"] },
+    ],
+    stickyLabels: [
+      { label: "Affects Balance", remover: " teams/admin ,UltraProdigy, label-sync-app[bot], " },
+    ],
+    reviewRequests: [
+      { label: "Needs Art", reviewer: "teams/art", when: "afterApproval", approvedBy: "teams/developers, UltraProdigy" },
+    ],
+  });
+
+  assert.deepEqual(config.protectedLabelApprovals, [
+    { label: "Affects Balance", approver: { type: "team", slug: "admin", value: "teams/admin" } },
+    { label: "Affects Balance", approver: { type: "user", login: "UltraProdigy", value: "UltraProdigy" } },
+    { label: "Requires Admin", approver: { type: "team", slug: "admin", value: "teams/admin" } },
+    { label: "Requires Admin", approver: { type: "user", login: "OtherUser", value: "OtherUser" } },
+    { label: "Requires Admin", approver: { type: "user", login: "ThirdUser", value: "ThirdUser" } },
+  ]);
+  assert.deepEqual(config.stickyLabels, [
+    { label: "Affects Balance", remover: { type: "team", slug: "admin", value: "teams/admin" } },
+    { label: "Affects Balance", remover: { type: "user", login: "UltraProdigy", value: "UltraProdigy" } },
+    { label: "Affects Balance", remover: { type: "user", login: "label-sync-app[bot]", value: "label-sync-app[bot]" } },
+  ]);
+  assert.deepEqual(config.reviewRequests[0].approvedBy, [
+    { type: "team", slug: "developers", value: "teams/developers" },
+    { type: "user", login: "UltraProdigy", value: "UltraProdigy" },
+  ]);
+});
+
+test("validateLabelTestWorkflowConfig rejects empty or duplicate members in a list", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: [{ label: "Affects Balance", remover: " , " }] }),
+    /stickyLabels remover must be a non-empty string\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ protectedLabelApprovals: [{ label: "Affects Balance", approver: [] }] }),
+    /protectedLabelApprovals approver must be a non-empty string\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      protectedLabelApprovals: [{ label: "Affects Balance", approver: "teams/admin, teams/Admin" }],
+    }),
+    /Duplicate protectedLabelApprovals entry detected: "Affects Balance" with approver "teams\/Admin"\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      stickyLabels: [
+        { label: "Affects Balance", remover: "UltraProdigy" },
+        { label: "Affects Balance", remover: "teams/admin, ultraprodigy" },
+      ],
+    }),
+    /Duplicate stickyLabels entry detected: "Affects Balance" with remover "ultraprodigy"\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ stickyLabels: [{ label: "Affects Balance", remover: "teams/admin, org/admin" }] }),
+    /stickyLabels user remover "org\/admin" must not contain "\/"\./,
+  );
+});

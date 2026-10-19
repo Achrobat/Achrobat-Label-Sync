@@ -126,24 +126,38 @@ const configDefaults = {
   },
 
   // If a listed label is present on a PR, at least one listed user or team member for that label must have
-  // latest effective review state APPROVED.
+  // latest effective review state APPROVED. List several approvers in one entry separated by commas.
   "protectedLabelApprovals": [
-    // { "label": "Affects Balance", "approver": "teams/admin" },
-    // { "label": "Affects Balance", "approver": "UltraProdigy" }
+    // { "label": "Affects Balance", "approver": "teams/admin, UltraProdigy" }
   ],
 
   // Sticky labels stay on a PR once applied. If anyone other than a listed remover (user, team member, or
   // GitHub App bot login such as "my-app[bot]") takes one off, Label Test puts it straight back.
   // Combine with protectedLabelApprovals so the label cannot be removed to skip a required approval.
-  // Removals made by Label Sync workflows such as Remove-Labels are always allowed.
+  // Removals made by Label Sync workflows such as Remove-Labels are always allowed. List several removers in
+  // one entry separated by commas.
   "stickyLabels": [
-    // { "label": "Affects Balance", "remover": "teams/admin" },
-    // { "label": "Affects Balance", "remover": "UltraProdigy" }
+    // { "label": "Affects Balance", "remover": "teams/admin, UltraProdigy" }
   ],
 
   // When true, the first time a sticky label is restored on a PR, Label Test posts a one-time comment naming
   // who can remove it. Later restorations of the same label on that PR do not comment again.
   "stickyLabelComment": false,
+
+  // Review requests ask a user or team to review a PR that has the label. "when" picks the timing:
+  //   "labeled" (default): request as soon as the label is on the PR.
+  //   "afterApproval": request once someone who is not the reviewer (or not on the reviewer team) approves.
+  //   "approvedBy" (afterApproval only) limits which approvals count, as a comma-separated list; leave it
+  //   out to count any approval.
+  // Nothing is requested on draft PRs or once the reviewer has approved. Each reviewer is requested once per
+  // label application or new triggering approval, so a request removed by hand stays removed. If the label
+  // is removed, a pending request made by Label Sync is withdrawn. Team reviewers need the configured PAT
+  // or GitHub App token, and the team must have access to the repository.
+  "reviewRequests": [
+    // { "label": "Requires Admin", "reviewer": "teams/admin" },
+    // { "label": "Affects Balance", "reviewer": "teams/balance-team", "when": "afterApproval" },
+    // { "label": "Needs Art Review", "reviewer": "teams/art", "when": "afterApproval", "approvedBy": "teams/developers, UltraProdigy" }
+  ],
 
   // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
   // when it is manually run.

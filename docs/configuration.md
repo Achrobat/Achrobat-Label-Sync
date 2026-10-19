@@ -38,7 +38,7 @@ Validation checks include:
 - Repository filter shape
 - Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
-- Label Test user and `teams/<slug>` approver and sticky label remover syntax
+- Label Test user and `teams/<slug>` approver, sticky label remover, and review request reviewer syntax
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 
