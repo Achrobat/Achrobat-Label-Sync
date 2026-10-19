@@ -14,14 +14,18 @@ import {
   validateRepositoryFilter,
 } from "./lib/config-validation.mjs";
 import {
+  activeFilterEntryCount,
+  describeCustomPropertyRules,
   filterEligibleRepositories,
   filterRepositories,
+  formatFilterMode,
   formatRepositoryLink,
   formatSkippedRepository,
   isSourceRepository,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
+import { loadRepositoryCustomProperties } from "./lib/custom-properties.mjs";
 import { getWorkflowMetadata, toJobSummaryMarkdown } from "./lib/changelog-utils.mjs";
 
 const workspaceRoot = process.cwd();
@@ -64,7 +68,7 @@ function formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterM
     return "Custom";
   }
 
-  return activeFilterMode === "whitelist" ? "Whitelist" : "Blacklist";
+  return formatFilterMode(activeFilterMode);
 }
 
 function renderSummaryLine(line) {
@@ -351,12 +355,16 @@ async function main() {
   });
   const configuredLabels = validateLabels(await readJsonc(labelsPath));
   const repositoryFilter = validateRepositoryFilter(await readJsonc(repositoryFilterPath));
-  const activeFilterCount = repositoryFilter.useWhitelist ? repositoryFilter.whitelist.size : repositoryFilter.blacklist.size;
-  const activeFilterMode = repositoryFilter.useWhitelist ? "whitelist" : "blacklist";
+  const activeFilterCount = activeFilterEntryCount(repositoryFilter);
+  const activeFilterMode = repositoryFilter.filterMode;
 
   console.log(
     `Loaded ${configuredLabels.length} configured labels and ${activeFilterCount} active repository filter entries from config/repository-filter.jsonc (mode=${activeFilterMode}).`,
   );
+
+  if (activeFilterMode === "customProperty") {
+    console.log(`Custom property rules: ${describeCustomPropertyRules(repositoryFilter.customProperties)}.`);
+  }
 
   if (validateOnly) {
     console.log("Configuration is valid.");
@@ -366,7 +374,15 @@ async function main() {
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
 
-  const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
+  const organizationRepositories = await getOrganizationRepositories(token, properties.organization);
+  const discoveredRepositories = targetRepositoryFilter === null && repositoryFilter.filterMode === "customProperty"
+    ? await loadRepositoryCustomProperties(organizationRepositories, {
+      request: (method, apiPath) => githubRequest(token, method, apiPath),
+      orgName: properties.organization,
+      customProperties: repositoryFilter.customProperties,
+      configPath: "config/repository-filter.jsonc",
+    })
+    : organizationRepositories;
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
   const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, properties.organization, properties.sourceRepository)

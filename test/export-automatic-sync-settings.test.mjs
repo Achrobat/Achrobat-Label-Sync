@@ -17,7 +17,7 @@ async function createWorkspace(automaticSync) {
   await fs.writeFile(
     path.join(configDir, "repository-filter.jsonc"),
     `${JSON.stringify({
-      useWhitelist: false,
+      filterMode: "blacklist",
       automaticSync,
       whitelist: [],
       blacklist: [],

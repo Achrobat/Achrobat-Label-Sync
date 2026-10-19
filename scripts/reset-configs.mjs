@@ -164,25 +164,50 @@ const configDefaults = {
     // { "label": "Needs Art Review", "reviewer": "teams/art", "when": "afterApproval", "approvedBy": "teams/developers, UltraProdigy" }
   ],
 
-  // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
-  // when it is manually run.
+  // Chooses which repositories 05 - Distribute-Label-Workflow installs the Label Test workflows in. This is
+  // separate from config/repository-filter.jsonc but uses the same format. The workflow's optional
+  // "repositories" input overrides it for a single run.
   "workflowDistribution": {
+    // "whitelist": only the repositories listed in "whitelist".
+    // "blacklist": every discovered org repository except those listed in "blacklist".
+    // "customProperty": repositories chosen by the rules in "customProperties". The Label Sync token needs the
+    //                   organization "Custom properties" read permission for this mode.
+    "filterMode": "whitelist",
+
     "whitelist": [
       // "sandbox-repo",
       // "your-org-name/important-repo"
     ],
+
     "blacklist": [
       // "do-not-touch",
       // "your-org-name/private-internal-tools"
-    ]
+    ],
+
+    // "logic": "AND" means a repository must pass every rule, "OR" means it must pass at least one.
+    // Each rule is one list: ["Property Name", "whitelist" or "blacklist", "Option", "Another Option", ...]
+    //   "whitelist": the repository's value for the property must be one of the listed options.
+    //   "blacklist": the repository's value must not be any of the listed options. Repositories with no value pass.
+    // Options match the property value exactly, ignoring case. For true/false properties use "true" or "false".
+    "customProperties": {
+      "logic": "AND",
+      "rules": [
+        // ["Team", "whitelist", "Core", "Addons"],
+        // ["Lifecycle", "blacklist", "Deprecated"]
+      ]
+    }
   }
 }
 `,
-  "repository-filter.jsonc": `// Set to true to sync only the repositories listed in "whitelist".
-// Set to false to sync every discovered org repository except those listed in "blacklist".
+  "repository-filter.jsonc": `// "filterMode" chooses which repositories Label Sync works on:
+//   "whitelist": only the repositories listed in "whitelist".
+//   "blacklist": every discovered org repository except those listed in "blacklist".
+//   "customProperty": repositories chosen by their organization custom property values, using the rules in
+//                     "customProperties". The Label Sync token needs the organization "Custom properties" read
+//                     permission for this mode.
 // The configured source repository does not need to be listed here and is skipped even if listed.
 {
-  "useWhitelist": true,
+  "filterMode": "whitelist",
 
   "automaticSync": {
     // Automatic Org-Label-Sync runs once daily. To change the frequency, edit the schedule in
@@ -193,17 +218,34 @@ const configDefaults = {
     "labelReplacements": ""
   },
 
-  // Used only when "useWhitelist" is true.
+  // Used only when "filterMode" is "whitelist".
   "whitelist": [
     // "sandbox-repo",
     // "your-org-name/important-repo"
   ],
 
-  // Used only when "useWhitelist" is false.
+  // Used only when "filterMode" is "blacklist".
   "blacklist": [
     // "do-not-touch",
     // "your-org-name/private-internal-tools"
-  ]
+  ],
+
+  // Used only when "filterMode" is "customProperty".
+  // "logic" decides how several rules combine: "AND" means a repository must pass every rule, "OR" means it must
+  // pass at least one.
+  // Each rule is one list: ["Property Name", "whitelist" or "blacklist", "Option", "Another Option", ...]
+  //   "whitelist": the repository's value for the property must be one of the listed options.
+  //   "blacklist": the repository's value must not be any of the listed options. Repositories with no value pass.
+  // Options match the property value exactly, ignoring case. For true/false properties use "true" or "false".
+  // Property names and options are checked against the organization's custom properties when a workflow runs,
+  // so a typo fails the run instead of selecting the wrong repositories.
+  "customProperties": {
+    "logic": "AND",
+    "rules": [
+      // ["Team", "whitelist", "Core", "Addons"],
+      // ["Lifecycle", "blacklist", "Deprecated"]
+    ]
+  }
 }
 `,
 };

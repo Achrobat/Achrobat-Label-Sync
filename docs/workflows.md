@@ -65,7 +65,7 @@ The workflow also checks for automatic runs every day at midnight UTC. Configure
 
 Set `enabled` to `true` to allow the daily run. `labelReplacements` uses the same `old=new, old2=new2` format as the manual input. The schedule itself must be changed in `.github/workflows/01-org-label-sync.yml` because GitHub evaluates workflow schedules before loading repository config.
 
-Automatic runs perform the normal full organization sync after applying the configured whitelist or blacklist. Repositories that already match remain unchanged, new repositories receive the managed labels, and label drift in existing repositories is corrected.
+Automatic runs perform the normal full organization sync after applying the configured repository filter (whitelist, blacklist, or custom property rules). Repositories that already match remain unchanged, new repositories receive the managed labels, and label drift in existing repositories is corrected.
 
 When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing. Workflow summaries are retained according to GitHub Actions run retention settings.
 

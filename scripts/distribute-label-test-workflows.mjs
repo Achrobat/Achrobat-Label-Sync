@@ -8,14 +8,18 @@ import {
   validateProperties,
 } from "./lib/config-validation.mjs";
 import {
+  describeCustomPropertyRules,
   filterEligibleRepositories,
+  formatFilterMode,
   formatRepositoryLink,
   formatSkippedRepository,
   isSourceRepository,
   parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
+  repositoryPassesFilter,
 } from "./lib/repository-selection.mjs";
+import { loadRepositoryCustomProperties } from "./lib/custom-properties.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -227,11 +231,7 @@ function displayBoolean(value) {
 }
 
 function displayRepositorySelectionMode(value) {
-  if (value === "custom") {
-    return "Custom";
-  }
-
-  return value === "whitelist" ? "Whitelist" : "Blacklist";
+  return formatFilterMode(value);
 }
 
 function displayDeliveryMode(value) {
@@ -365,13 +365,10 @@ export function selectDistributionRepositories(
   {
     orgName,
     sourceRepository,
-    mode,
     targetRepositories = null,
     workflowDistribution,
   },
 ) {
-  assert(mode === "whitelist" || mode === "blacklist", 'Repository selection mode must be either "whitelist" or "blacklist".');
-
   if (targetRepositories) {
     const selected = repositories
       .filter((repository) => (
@@ -393,18 +390,12 @@ export function selectDistributionRepositories(
     return selected;
   }
 
+  // The selection mode comes from "workflowDistribution.filterMode" in config/label-test-workflow-config.jsonc.
   return repositories
-    .filter((repository) => {
-      if (isSourceRepository(repository, sourceRepository, orgName)) {
-        return false;
-      }
-
-      if (mode === "whitelist") {
-        return repositoryMatchesEntries(repository, workflowDistribution.whitelist, orgName);
-      }
-
-      return !repositoryMatchesEntries(repository, workflowDistribution.blacklist, orgName);
-    })
+    .filter((repository) => (
+      !isSourceRepository(repository, sourceRepository, orgName)
+      && repositoryPassesFilter(repository, orgName, workflowDistribution)
+    ))
     .sort((left, right) => left.full_name.localeCompare(right.full_name));
 }
 
@@ -995,11 +986,9 @@ async function main() {
   const token = process.env.LABEL_SYNC_TOKEN;
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
 
-  const mode = process.env.REPOSITORY_SELECTION_MODE;
   const deliveryMode = normalizeDeliveryMode(process.env.DELIVERY_MODE);
   const dryRun = parseBoolean(process.env.DRY_RUN);
   const targetRepositories = parseTargetRepositories(process.env.TARGET_REPOSITORIES);
-  assert(mode === "whitelist" || mode === "blacklist", 'REPOSITORY_SELECTION_MODE must be either "whitelist" or "blacklist".');
   assert(deliveryMode === "direct_commit" || deliveryMode === "open_pr", 'DELIVERY_MODE must be either "direct_commit" or "open_pr".');
 
   const orgName = process.env.ORG_NAME ?? process.env.GITHUB_REPOSITORY_OWNER ?? properties.organization;
@@ -1007,13 +996,34 @@ async function main() {
   const sourceRef = process.env.LABEL_TEST_SOURCE_REF ?? process.env.GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH ?? "main";
   assert(sourceRepository, "LABEL_TEST_SOURCE_REPOSITORY or GITHUB_REPOSITORY is required.");
 
-  const discoveredRepositories = await getOrganizationRepositories(token, orgName);
+  const { workflowDistribution } = config;
+  const usesCustomProperties = !targetRepositories && workflowDistribution.filterMode === "customProperty";
+
+  if (targetRepositories) {
+    console.log("Repository selection: workflow repository override.");
+  } else {
+    console.log(`Repository selection mode from config/label-test-workflow-config.jsonc: ${workflowDistribution.filterMode}.`);
+  }
+
+  if (usesCustomProperties) {
+    console.log(`Custom property rules: ${describeCustomPropertyRules(workflowDistribution.customProperties)}.`);
+  }
+
+  const organizationRepositories = await getOrganizationRepositories(token, orgName);
+  const discoveredRepositories = usesCustomProperties
+    ? await loadRepositoryCustomProperties(organizationRepositories, {
+      request: (method, apiPath) => githubRequest(token, method, apiPath),
+      orgName,
+      customProperties: workflowDistribution.customProperties,
+      configPath: "config/label-test-workflow-config.jsonc",
+      configKey: "workflowDistribution.customProperties",
+    })
+    : organizationRepositories;
   const selectedRepositories = selectDistributionRepositories(discoveredRepositories, {
     orgName,
     sourceRepository,
-    mode,
     targetRepositories,
-    workflowDistribution: config.workflowDistribution,
+    workflowDistribution,
   });
   const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
   const requiredTokenPermissions = deliveryMode === "open_pr"
@@ -1052,7 +1062,7 @@ async function main() {
     generatedDate: formatDateOnly(),
     actor: process.env.GITHUB_ACTOR ?? "",
     dryRun,
-    repositorySelectionMode: targetRepositories ? "custom" : mode,
+    repositorySelectionMode: targetRepositories ? "custom" : workflowDistribution.filterMode,
     deliveryMode,
     selectedRepositories,
     skippedRepositories,

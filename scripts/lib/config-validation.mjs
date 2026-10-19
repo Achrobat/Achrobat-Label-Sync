@@ -260,6 +260,105 @@ export function validateRepositoryEntries(entries, configKey, { configPath = "co
   }));
 }
 
+const FILTER_MODES = new Map([
+  ["whitelist", "whitelist"],
+  ["blacklist", "blacklist"],
+  ["customproperty", "customProperty"],
+]);
+const CUSTOM_PROPERTY_LOGIC = new Set(["AND", "OR"]);
+const CUSTOM_PROPERTY_RULE_MODES = new Set(["whitelist", "blacklist"]);
+const CUSTOM_PROPERTY_RULE_SHAPE = '["Property Name", "whitelist" or "blacklist", "Option", "Another Option", ...]';
+
+function validateFilterMode(value, configKey, { configPath, defaultMode }) {
+  if (value === undefined) {
+    return defaultMode;
+  }
+
+  const mode = typeof value === "string" ? FILTER_MODES.get(value.trim().toLowerCase()) : undefined;
+  assert(mode, `${configPath} field "${configKey}" must be "whitelist", "blacklist", or "customProperty".`);
+  return mode;
+}
+
+// Custom property rules select repositories by their organization custom property values. Each rule is one list:
+// ["Property Name", "whitelist" | "blacklist", "Option", "Another Option", ...]. "logic" ("AND" or "OR") decides
+// whether a repository must pass every rule or at least one. Names and options compare case-insensitively.
+export function validateCustomPropertyFilter(
+  value,
+  configKey,
+  { configPath = "config/repository-filter.jsonc", requireRules = false, modeKey = "filterMode" } = {},
+) {
+  const customProperties = value ?? {};
+  assert(
+    customProperties && typeof customProperties === "object" && !Array.isArray(customProperties),
+    `${configPath} field "${configKey}" must be an object with "logic" and "rules".`,
+  );
+
+  const rawLogic = customProperties.logic ?? "AND";
+  const logic = typeof rawLogic === "string" ? rawLogic.trim().toUpperCase() : "";
+  assert(CUSTOM_PROPERTY_LOGIC.has(logic), `${configPath} field "${configKey}.logic" must be "AND" or "OR".`);
+
+  const rawRules = customProperties.rules ?? [];
+  assert(Array.isArray(rawRules), `${configPath} field "${configKey}.rules" must contain an array.`);
+
+  const seenRules = new Set();
+  const rules = rawRules.map((rule, index) => {
+    assert(
+      Array.isArray(rule) && rule.length >= 3 && rule.every((part) => typeof part === "string" && part.trim()),
+      `"${configKey}.rules" entry at index ${index} must be a list of non-empty strings shaped like ${CUSTOM_PROPERTY_RULE_SHAPE}.`,
+    );
+
+    const [property, rawMode, ...options] = rule.map((part) => part.trim());
+    const mode = rawMode.toLowerCase();
+    assert(
+      CUSTOM_PROPERTY_RULE_MODES.has(mode),
+      `"${configKey}.rules" entry for "${property}" must use "whitelist" or "blacklist" as its second value, not "${rawMode}".`,
+    );
+
+    const ruleKey = `${normalizeName(property)}\0${mode}`;
+    assert(
+      !seenRules.has(ruleKey),
+      `Duplicate "${configKey}.rules" entry detected: "${property}" with ${mode}. Combine its options into one entry.`,
+    );
+    seenRules.add(ruleKey);
+
+    const seenOptions = new Set();
+    for (const option of options) {
+      const optionKey = normalizeName(option);
+      assert(
+        !seenOptions.has(optionKey),
+        `"${configKey}.rules" entry for "${property}" lists option "${option}" more than once.`,
+      );
+      seenOptions.add(optionKey);
+    }
+
+    return { property, mode, options };
+  });
+
+  assert(
+    !requireRules || rules.length > 0,
+    `${configPath} field "${configKey}.rules" must contain at least one rule when "${modeKey}" is "customProperty".`,
+  );
+
+  return { logic, rules };
+}
+
+// Shared by config/repository-filter.jsonc and "workflowDistribution" in config/label-test-workflow-config.jsonc.
+export function validateRepositorySelection(selection, { configPath, keyPrefix = "", defaultMode }) {
+  const modeKey = `${keyPrefix}filterMode`;
+  const filterMode = validateFilterMode(selection.filterMode, modeKey, { configPath, defaultMode });
+
+  return {
+    filterMode,
+    whitelist: validateRepositoryEntries(selection.whitelist ?? [], `${keyPrefix}whitelist`, { configPath }),
+    blacklist: validateRepositoryEntries(selection.blacklist ?? [], `${keyPrefix}blacklist`, { configPath }),
+    customProperties: validateCustomPropertyFilter(selection.customProperties, `${keyPrefix}customProperties`, {
+      configPath,
+      requireRules: filterMode === "customProperty",
+      modeKey,
+    }),
+  };
+}
+
 export function parseLabelReplacements(value) {
   if (!value || !value.trim()) {
     return [];
@@ -297,9 +396,10 @@ export function validateRepositoryFilter(repositoryFilter) {
     "config/repository-filter.jsonc must contain an object.",
   );
 
-  if (repositoryFilter.useWhitelist !== undefined) {
-    assert(typeof repositoryFilter.useWhitelist === "boolean", 'config/repository-filter.jsonc field "useWhitelist" must be a boolean.');
-  }
+  assert(
+    repositoryFilter.useWhitelist === undefined,
+    'config/repository-filter.jsonc field "useWhitelist" was replaced by "filterMode". Remove "useWhitelist" and set "filterMode" to "whitelist", "blacklist", or "customProperty".',
+  );
 
   if (repositoryFilter.automaticSync !== undefined) {
     assert(
@@ -337,9 +437,10 @@ export function validateRepositoryFilter(repositoryFilter) {
   parseLabelReplacements(labelReplacements);
 
   return {
-    useWhitelist: repositoryFilter.useWhitelist ?? false,
-    whitelist: validateRepositoryEntries(repositoryFilter.whitelist ?? [], "whitelist"),
-    blacklist: validateRepositoryEntries(repositoryFilter.blacklist ?? [], "blacklist"),
+    ...validateRepositorySelection(repositoryFilter, {
+      configPath: "config/repository-filter.jsonc",
+      defaultMode: "blacklist",
+    }),
     automaticSync: {
       enabled: automaticSync.enabled ?? false,
       deleteMissing: automaticSync.deleteMissing ?? false,
@@ -641,17 +742,11 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     stickyLabels: validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []),
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
-    workflowDistribution: {
-      whitelist: validateRepositoryEntries(
-        workflowDistribution.whitelist ?? [],
-        "workflowDistribution.whitelist",
-        { configPath: "config/label-test-workflow-config.jsonc" },
-      ),
-      blacklist: validateRepositoryEntries(
-        workflowDistribution.blacklist ?? [],
-        "workflowDistribution.blacklist",
-        { configPath: "config/label-test-workflow-config.jsonc" },
-      ),
-    },
+    // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
+    workflowDistribution: validateRepositorySelection(workflowDistribution, {
+      configPath: "config/label-test-workflow-config.jsonc",
+      keyPrefix: "workflowDistribution.",
+      defaultMode: "whitelist",
+    }),
   };
 }

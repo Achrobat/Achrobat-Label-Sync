@@ -35,8 +35,13 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // { "label": "Affects Balance", "reviewer": "teams/balance-team", "when": "afterApproval" }
   ],
   "workflowDistribution": {
+    "filterMode": "whitelist",
     "whitelist": [],
-    "blacklist": []
+    "blacklist": [],
+    "customProperties": {
+      "logic": "AND",
+      "rules": []
+    }
   }
 }
 ```
@@ -115,11 +120,12 @@ The refresh implementation remains in the central Label-Sync repository as the r
 Inputs:
 
 - `dry_run`: preview without writing
-- `repository_selection_mode`: choose `whitelist` or `blacklist` from `config/label-test-workflow-config.jsonc`
 - `delivery_mode`: choose `Direct Commit` or `Pull Request`
 - `repositories`: optional comma-separated repository override, such as `repo-one, org/repo-two`
 
-When `repositories` is provided, it takes priority over `repository_selection_mode` and runs only on the listed non-source repositories.
+Target repositories are chosen by `workflowDistribution` in `config/label-test-workflow-config.jsonc`. Set its `filterMode` to `whitelist`, `blacklist`, or `customProperty`; the format matches `config/repository-filter.jsonc` and is described in [Configuration](configuration.md#repository-filter). It defaults to `whitelist` when `filterMode` is omitted.
+
+When `repositories` is provided, it takes priority over `workflowDistribution.filterMode` and runs only on the listed non-source repositories.
 
 `Pull Request` mode reuses the stable branch `label-sync/update-label-test-workflow` in each target repository and opens a PR if one does not already exist. Re-running the distributor updates the existing branch and PR.
 

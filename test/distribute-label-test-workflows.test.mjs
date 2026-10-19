@@ -573,8 +573,8 @@ test("selectDistributionRepositories applies whitelist mode and skips the source
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "whitelist",
     workflowDistribution: {
+      filterMode: "whitelist",
       whitelist: new Set(["alpha", "example/beta", "label-sync"]),
       blacklist: new Set([]),
     },
@@ -590,8 +590,8 @@ test("selectDistributionRepositories applies blacklist mode", () => {
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "blacklist",
     workflowDistribution: {
+      filterMode: "blacklist",
       whitelist: new Set([]),
       blacklist: new Set(["beta"]),
     },
@@ -607,9 +607,9 @@ test("selectDistributionRepositories lets target repository override take priori
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "blacklist",
     targetRepositories: new Set(["beta"]),
     workflowDistribution: {
+      filterMode: "blacklist",
       whitelist: new Set([]),
       blacklist: new Set(["beta", "gamma"]),
     },
@@ -633,9 +633,9 @@ test("selectDistributionRepositories rejects unknown target repository overrides
     () => selectDistributionRepositories(repositories, {
       orgName: "example",
       sourceRepository: "example/label-sync",
-      mode: "whitelist",
       targetRepositories: new Set(["missing-repo"]),
       workflowDistribution: {
+        filterMode: "whitelist",
         whitelist: new Set([]),
         blacklist: new Set([]),
       },

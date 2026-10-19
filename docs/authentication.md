@@ -104,6 +104,10 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
     - Pull Requests: Read and Write
     - Contents: Read and Write
 
+    If any repository filter uses "filterMode": "customProperty", also add this organization permission:
+
+    - Custom properties: Read Only
+
 ### Step 5: Generate and copy the token
 
     Be aware that GitHub only lets you do this one time. You will need to generate a new token if you lose it.
@@ -152,6 +156,10 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
     - Issues: Read and Write
     - Pull Requests: Read and Write
     - Contents: Read and Write
+
+    If any repository filter uses "filterMode": "customProperty", also grant this organization permission:
+
+    - Custom properties: Read Only
 
 ### Step 4: Create the app
 
