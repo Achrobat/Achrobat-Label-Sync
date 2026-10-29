@@ -25,7 +25,8 @@
     "Ongoing Freeze - Do NOT Merge",
     "❌ There is a Merge Conflict With Another PR",
     "⚠️ AUTHOR MERGE ONLY",
-    "Frozen PR"
+    "Frozen PR",
+    "Waiting on PR"
   ],
 
   // Pull requests opened by these GitHub logins pass Label Test without applying label or approval rules.
@@ -103,6 +104,8 @@
     // "label": "Waiting on PR",
     // "allowedUsers": "teams/maintainers, UltraProdigy",
     // "allowExternalRepositories": false
+    "label": "Waiting on PR",
+    "allowedUsers": "teams/Admin, UltraProdigy"
   },
 
   // How "/" commands in pull request comments reach Label Sync. Only one path is active: commands that arrive

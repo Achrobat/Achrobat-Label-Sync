@@ -106,5 +106,10 @@
     "name": "Safe for Stable",
     "color": "d4c5f9",
     "description": "Bugfix with low break chance for patch releases"
+  },
+  {
+    "name": "Waiting on PR",
+    "color": "fbca04",
+    "description": "Waiting on another PR to be merged or closed"
   }
 ]
