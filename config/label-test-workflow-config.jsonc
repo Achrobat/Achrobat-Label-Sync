@@ -70,6 +70,18 @@
     // { "label": "Needs Art Review", "reviewer": "teams/art", "when": "afterApproval", "approvedBy": "teams/developers, UltraProdigy" }
   ],
 
+  // Wait for merge: someone listed in "allowedUsers" comments "/wait-for-merge <link>" on a PR, where the link is
+  // a PR URL, "owner/repo#123", or "#123". Label Test adds "label" until every linked PR is merged or closed,
+  // then removes it and comments to tell the PR author and whoever ran the command that the PR is ready to
+  // merge. Several commands stack. Removing the label by hand cancels the wait. "label" must also be listed in
+  // "failingLabels" so it blocks merging, and it cannot be a sticky label. "allowExternalRepositories"
+  // (default false) also allows links to PRs outside the organization. Leave "label" out to turn it off.
+  "waitForMerge": {
+    // "label": "Waiting on PR",
+    // "allowedUsers": "teams/maintainers, UltraProdigy",
+    // "allowExternalRepositories": false
+  },
+
   // Chooses which repositories 05 - Distribute-Label-Workflow installs the Label Test workflows in. This is
   // separate from config/repository-filter.jsonc but uses the same format. The workflow's optional
   // "repositories" input overrides it for a single run.

@@ -719,6 +719,73 @@ function validateStickyLabelComment(value) {
   return value;
 }
 
+// The wait-for-merge command puts "label" on a pull request until every linked pull request is merged or
+// closed. The label must also be a failing label, otherwise it would not block merging. It cannot be sticky:
+// removing the label is how a wait is cancelled. "allowedUsers" lists who may run the command.
+function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
+  const configKey = "waitForMerge";
+
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  assert(
+    typeof value === "object" && !Array.isArray(value),
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an object.`,
+  );
+
+  const hasLabel = typeof value.label === "string" && value.label.trim() !== "";
+
+  if (!hasLabel) {
+    assert(
+      value.label === undefined || value.label === "",
+      `${configKey} label must be a non-empty string.`,
+    );
+    assert(
+      value.allowedUsers === undefined && value.allowExternalRepositories === undefined,
+      `${configKey} needs a "label" when "allowedUsers" or "allowExternalRepositories" is set.`,
+    );
+    return null;
+  }
+
+  const label = value.label.trim();
+  const labelKey = normalizeName(label);
+  assert(
+    failingLabels.some((failingLabel) => normalizeName(failingLabel) === labelKey),
+    `${configKey} label "${label}" must also be listed in "failingLabels" so that it blocks merging.`,
+  );
+  assert(
+    !stickyLabels.some((entry) => normalizeName(entry.label) === labelKey),
+    `${configKey} label "${label}" cannot also be a sticky label, because removing it is how a wait is cancelled.`,
+  );
+
+  assert(
+    typeof value.allowedUsers === "string" || Array.isArray(value.allowedUsers),
+    `${configKey} allowedUsers must be a user, a "teams/<slug>" team, or a list of them.`,
+  );
+
+  const seen = new Set();
+  const allowedUsers = splitLabelMemberList(value.allowedUsers, { configKey, role: "allowedUsers" }).map((item) => {
+    const member = validateLabelMember(item, { configKey, role: "allowedUsers" });
+    const key = normalizeName(member.value);
+    assert(!seen.has(key), `${configKey} lists allowedUsers "${member.value}" more than once.`);
+    seen.add(key);
+    return member;
+  });
+
+  const allowExternalRepositories = value.allowExternalRepositories ?? false;
+  assert(
+    typeof allowExternalRepositories === "boolean",
+    `${configKey} allowExternalRepositories must be true or false.`,
+  );
+
+  return {
+    label,
+    allowedUsers,
+    allowExternalRepositories,
+  };
+}
+
 export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   assert(
     labelTestWorkflowConfig && typeof labelTestWorkflowConfig === "object" && !Array.isArray(labelTestWorkflowConfig),
@@ -731,17 +798,21 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     'config/label-test-workflow-config.jsonc field "workflowDistribution" must contain an object.',
   );
 
+  const failingLabels = validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels");
+  const stickyLabels = validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []);
+
   return {
     requiredLabels: validateLabelNameEntries(labelTestWorkflowConfig.requiredLabels ?? [], "requiredLabels"),
-    failingLabels: validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels"),
+    failingLabels,
     ignoredPullRequestAuthors: validatePullRequestAuthorEntries(
       labelTestWorkflowConfig.ignoredPullRequestAuthors ?? [],
     ),
     repositoryLabels: validateRepositoryLabelEntries(labelTestWorkflowConfig.repositoryLabels ?? {}),
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
-    stickyLabels: validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []),
+    stickyLabels,
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
+    waitForMerge: validateWaitForMerge(labelTestWorkflowConfig.waitForMerge, { failingLabels, stickyLabels }),
     // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
     workflowDistribution: validateRepositorySelection(workflowDistribution, {
       configPath: "config/label-test-workflow-config.jsonc",

@@ -34,6 +34,11 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // { "label": "Requires Admin", "reviewer": "teams/admin" },
     // { "label": "Affects Balance", "reviewer": "teams/balance-team", "when": "afterApproval" }
   ],
+  "waitForMerge": {
+    // "label": "Waiting on PR",
+    // "allowedUsers": "teams/maintainers, UltraProdigy",
+    // "allowExternalRepositories": false
+  },
   "workflowDistribution": {
     "filterMode": "whitelist",
     "whitelist": [],
@@ -98,6 +103,56 @@ Behavior:
 - Requests use the configured PAT or GitHub App token. GitHub does not let the default `GITHUB_TOKEN` request team reviews, so team reviewers need the configured token, which needs pull request write access. The team must also have access to the repository, or GitHub rejects the request; the warning names the team. User reviewers must be able to access the repository.
 - Combine `afterApproval` with a matching `protectedLabelApprovals` entry (and optionally `stickyLabels`) to require the team's approval as well as request it.
 
+## Wait for merge
+
+`waitForMerge` lets a maintainer hold a pull request until other pull requests are merged. They comment:
+
+```text
+/wait-for-merge https://github.com/your-org/other-repo/pull/42
+```
+
+The link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request in the same repository. Label Sync adds the configured label, which keeps Label Test failing, and posts one tracking comment listing what the pull request is waiting on. When every linked pull request is merged or closed, the label is removed and Label Sync comments once, mentioning the pull request author and everyone who ran the command, to say the pull request is ready to merge.
+
+```jsonc
+"failingLabels": ["Waiting on PR"],
+"waitForMerge": {
+  "label": "Waiting on PR",
+  "allowedUsers": "teams/maintainers, UltraProdigy",
+  "allowExternalRepositories": false
+}
+```
+
+- `label` must also be listed in `failingLabels`, otherwise it would not block merging, and it cannot be a sticky label. Leave `label` out (the default) to turn the command off. Add the label to `config/labels.jsonc` too, so it exists with the intended color in every repository; GitHub otherwise creates it with a default color the first time it is added.
+- `allowedUsers` lists who may run the command: users, `teams/<slug>` teams, a comma-separated list, or an array. A command from anyone else is ignored and gets a 👎 reaction. Commands written by bots are ignored.
+- `allowExternalRepositories` (default `false`) allows links to pull requests outside the organization. Label Sync must be able to read them; public repositories always work.
+- The command must start the comment. One comment can hold several commands, one per line, and later commands add to the wait instead of replacing it. The label stays until every linked pull request is merged or closed.
+- Comments are kept to two. The tracking comment is created by the first command and then edited: when another command is added, when a linked pull request merges, and when one is closed without merging while others are still open. The second comment is the ready-to-merge notice. If a linked pull request was closed without merging, the notice says so, and the label is still removed.
+- Removing the label by hand cancels the wait. Commands posted before the removal no longer count, and the tracking comment is edited to say who cancelled it. Running the command again starts a new wait with a new tracking comment.
+- Links to the pull request itself, links that are not pull requests, and links outside the organization (unless allowed) are listed in the tracking comment as ignored. If none of the linked pull requests are open, the label is not added. A linked pull request that Label Sync cannot read keeps the wait going, so nothing is lifted by mistake.
+- Editing a command changes what the pull request waits on, and deleting the comment removes its links. If no valid links are left, the label is left in place for someone to remove. An edit that removes the leading `/` is not seen until the next check.
+- Nothing is stored outside the pull request. Every run works the state out again from the comments, the label history, and the live state of each linked pull request.
+
+### How the merge is noticed
+
+The pull request that merges is usually in another repository, so the waiting pull request gets no event of its own. Three things check waits:
+
+- **The central `Wait-For-Merge` workflow** in this repository finds every open pull request in the organization with the label and completes the waits that are done. It runs every three hours as a backstop, can be run by hand, and also runs on a `repository_dispatch` of type `pull-request-closed`. Send that dispatch whenever a pull request in the organization closes, and waits finish within moments:
+
+  ```http
+  POST /repos/<org>/<label-sync-repo>/dispatches
+  {"event_type": "pull-request-closed", "client_payload": {"repository": "owner/name", "number": 123}}
+  ```
+
+  Any service that sees the organization's `pull_request` `closed` webhook can send it. The sender's token needs Contents write access to this repository; nothing else. The payload is only logged; every pull request is read again from the API, so a wrong or forged dispatch cannot lift a label. Without a sender, the schedule alone still works, only more slowly. This workflow needs the configured PAT or GitHub App token, because it works across repositories. Scheduled workflows are off by default in forks until Actions is enabled for them.
+- **Label Test** completes the wait when it runs on the waiting pull request and every linked pull request is already closed, then evaluates the policy without the label.
+- **The command itself** completes the wait right away if the label is present and nothing is left open.
+
+### Caller workflow and tokens
+
+Commands arrive through a third caller workflow, `.github/workflows/label-test-commands.yml`, installed by `05 - Distribute-Label-Workflow`. It runs on `issue_comment` and only starts a runner for comments on pull requests that start with `/` and were not written by a bot. Every other comment in the repository still appears in the Actions tab as a skipped run. Commands are handled by the central `Label Test Command` reusable workflow, so new commands will not need the callers to be redistributed again. Like the review continuation, it runs from the target repository's default branch with the configured authentication and never checks out pull request code.
+
+Labels and comments use the configured PAT or GitHub App token. A label added or removed with it starts Label Test by itself, which updates the required check. With only the `GITHUB_TOKEN` fallback, the command reruns the latest Label Test run instead, which is why the caller grants `actions: write` to that job. Teams in `allowedUsers` need a token that can read team membership.
+
 Repository-specific rules are resolved centrally from the calling workflow's existing `github.repository` context. Adding or changing these rules does not require changes to the caller workflows.
 
 For team approval checks, the workflow token must be able to read the configured organization team membership. The same `properties.authentication` setup used by the label sync workflows is used for the reusable Label Test workflow.
@@ -114,6 +169,7 @@ Run `05 - Distribute-Label-Workflow` manually to install or update the Label Tes
 
 - `.github/workflows/label-test.yml`: the required policy check on `pull_request_target` and its privileged `workflow_run` continuation
 - `.github/workflows/label-test-review-refresh.yml`: records review context without secrets for the privileged continuation
+- `.github/workflows/label-test-commands.yml`: hands pull request comments that start with `/` to the central `Label Test Command` workflow
 
 The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` filename if a target received that earlier layout; the signal now lives at `.github/workflows/label-test-review-refresh.yml`. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 

@@ -669,7 +669,7 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 2);
 });
 
-test("generateCallerWorkflows emits one dispatcher job and one unprivileged review signal workflow", () => {
+test("generateCallerWorkflows emits one dispatcher job, one unprivileged review signal workflow and one command workflow", () => {
   const workflows = generateCallerWorkflows({
     sourceRepository: "fork-owner/Label-Sync",
     sourceRef: "main",
@@ -679,6 +679,7 @@ test("generateCallerWorkflows emits one dispatcher job and one unprivileged revi
   assert.deepEqual([...byPath.keys()], [
     ".github/workflows/label-test.yml",
     ".github/workflows/label-test-review-refresh.yml",
+    ".github/workflows/label-test-commands.yml",
   ]);
 
   const policy = byPath.get(".github/workflows/label-test.yml");
@@ -739,6 +740,28 @@ test("generateCallerWorkflows emits one dispatcher job and one unprivileged revi
   assert.match(refresh, /upload-artifact/);
   assert.match(refresh, /label-test-review-context/);
   assert.doesNotMatch(refresh, /workflow_run:/);
+
+  const commands = byPath.get(".github/workflows/label-test-commands.yml");
+  assert.match(commands, /name: Label Test Commands/);
+  assert.match(commands, /issue_comment:/);
+  assert.deepEqual(commands.match(/^ {6}- [a-z_]+$/gm).map((line) => line.trim().slice(2)), [
+    "created",
+    "edited",
+    "deleted",
+  ]);
+  // Only comments on pull requests that start with "/" and were not written by a bot start a runner. Bot
+  // edits matter: Label Sync edits its own tracking comment with an App token, which would otherwise loop.
+  assert.match(commands, /github\.event\.issue\.pull_request/);
+  assert.match(commands, /github\.event\.comment\.user\.type != 'Bot'/);
+  assert.match(commands, /startsWith\(github\.event\.comment\.body, '\/'\)/);
+  assert.match(commands, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test-command\.yml@main/);
+  assert.match(commands, /secrets: inherit/);
+  assert.match(commands, /actions: write/);
+  assert.match(commands, /issues: write/);
+  assert.match(commands, /pull-requests: write/);
+  assert.doesNotMatch(commands, /pull_request_target:/);
+  assert.doesNotMatch(commands, /checks: write/);
+  assert.equal(commands.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
 });
 
 test("normalizeDeliveryMode accepts workflow choice labels", () => {
