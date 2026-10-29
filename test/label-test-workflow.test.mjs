@@ -549,6 +549,9 @@ function reviewRequestedEvent({ team, user, requester, createdAt, id }) {
 
 const isLabelSync = async (login) => login === "label-sync-app[bot]";
 
+const writers = new Set(["DevUser", "DevAndBalance", "BalanceUser", "AdminUser", "RandomUser"]);
+const hasWriteAccess = async (login) => writers.has(login);
+
 test("planReviewRequests requests the reviewer as soon as a labeled entry's label is present", async () => {
   const plan = await planReviewRequests({
     config: reviewRequestConfig(reviewRequestEntries),
@@ -576,6 +579,7 @@ test("planReviewRequests waits for an outside approval before requesting an afte
     labelEvents: [labelEvent("labeled", "Affects Balance", "Contributor", "2026-10-18T10:00:00Z", 1)],
     pullRequestAuthor: "Contributor",
     isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess,
   };
 
   const beforeApproval = await planReviewRequests({
@@ -639,6 +643,7 @@ test("planReviewRequests only counts approvals from approvedBy when it is set", 
     labelEvents: [],
     pullRequestAuthor: "Contributor",
     isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess,
   };
 
   const outsider = await planReviewRequests({
@@ -670,6 +675,7 @@ test("planReviewRequests does not request again after a request at or after the 
     ],
     pullRequestAuthor: "Contributor",
     isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess,
   });
 
   assert.deepEqual(plan, { request: [], withdraw: [] });
@@ -689,6 +695,7 @@ test("planReviewRequests requests again after a newer outside approval or a re-a
     ],
     pullRequestAuthor: "Contributor",
     isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess,
   });
 
   assert.deepEqual(plan.request.map((request) => request.reviewer.value), ["teams/admin", "teams/balance-team"]);
@@ -805,4 +812,56 @@ test("planReviewRequests does nothing when no review requests are configured", a
   });
 
   assert.deepEqual(plan, { request: [], withdraw: [] });
+});
+
+test("planReviewRequests ignores afterApproval approvals from people without write access", async () => {
+  const seen = [];
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }],
+    reviews: [
+      { ...review("OutsideUser", "APPROVED", "2026-10-18T11:00:00Z", 10), author_association: "NONE" },
+      { ...review("ReadOnlyMember", "APPROVED", "2026-10-18T11:30:00Z", 11), author_association: "MEMBER" },
+    ],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess: async (login, association) => {
+      seen.push([login, association]);
+      return false;
+    },
+  });
+
+  assert.deepEqual(plan.request, []);
+  assert.deepEqual(seen, [["OutsideUser", "NONE"], ["ReadOnlyMember", "MEMBER"]]);
+});
+
+test("planReviewRequests triggers on the newest approval from someone with write access", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }],
+    reviews: [
+      review("DevUser", "APPROVED", "2026-10-18T11:00:00Z", 10),
+      review("OutsideUser", "APPROVED", "2026-10-18T12:00:00Z", 11),
+    ],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+    hasWriteAccess,
+  });
+
+  assert.deepEqual(plan.request.map((request) => request.approvedBy), ["DevUser"]);
+});
+
+test("planReviewRequests treats approvers as lacking write access when no checker is given", async () => {
+  const plan = await planReviewRequests({
+    config: reviewRequestConfig(reviewRequestEntries),
+    prLabels: [{ name: "Affects Balance" }],
+    reviews: [review("DevUser", "APPROVED", "2026-10-18T11:00:00Z", 10)],
+    labelEvents: [],
+    pullRequestAuthor: "Contributor",
+    isTeamMember: isConfiguredTeamMember,
+  });
+
+  assert.deepEqual(plan.request, []);
 });

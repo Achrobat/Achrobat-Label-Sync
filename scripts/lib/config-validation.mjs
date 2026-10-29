@@ -260,6 +260,105 @@ export function validateRepositoryEntries(entries, configKey, { configPath = "co
   }));
 }
 
+const FILTER_MODES = new Map([
+  ["whitelist", "whitelist"],
+  ["blacklist", "blacklist"],
+  ["customproperty", "customProperty"],
+]);
+const CUSTOM_PROPERTY_LOGIC = new Set(["AND", "OR"]);
+const CUSTOM_PROPERTY_RULE_MODES = new Set(["whitelist", "blacklist"]);
+const CUSTOM_PROPERTY_RULE_SHAPE = '["Property Name", "whitelist" or "blacklist", "Option", "Another Option", ...]';
+
+function validateFilterMode(value, configKey, { configPath, defaultMode }) {
+  if (value === undefined) {
+    return defaultMode;
+  }
+
+  const mode = typeof value === "string" ? FILTER_MODES.get(value.trim().toLowerCase()) : undefined;
+  assert(mode, `${configPath} field "${configKey}" must be "whitelist", "blacklist", or "customProperty".`);
+  return mode;
+}
+
+// Custom property rules select repositories by their organization custom property values. Each rule is one list:
+// ["Property Name", "whitelist" | "blacklist", "Option", "Another Option", ...]. "logic" ("AND" or "OR") decides
+// whether a repository must pass every rule or at least one. Names and options compare case-insensitively.
+export function validateCustomPropertyFilter(
+  value,
+  configKey,
+  { configPath = "config/repository-filter.jsonc", requireRules = false, modeKey = "filterMode" } = {},
+) {
+  const customProperties = value ?? {};
+  assert(
+    customProperties && typeof customProperties === "object" && !Array.isArray(customProperties),
+    `${configPath} field "${configKey}" must be an object with "logic" and "rules".`,
+  );
+
+  const rawLogic = customProperties.logic ?? "AND";
+  const logic = typeof rawLogic === "string" ? rawLogic.trim().toUpperCase() : "";
+  assert(CUSTOM_PROPERTY_LOGIC.has(logic), `${configPath} field "${configKey}.logic" must be "AND" or "OR".`);
+
+  const rawRules = customProperties.rules ?? [];
+  assert(Array.isArray(rawRules), `${configPath} field "${configKey}.rules" must contain an array.`);
+
+  const seenRules = new Set();
+  const rules = rawRules.map((rule, index) => {
+    assert(
+      Array.isArray(rule) && rule.length >= 3 && rule.every((part) => typeof part === "string" && part.trim()),
+      `"${configKey}.rules" entry at index ${index} must be a list of non-empty strings shaped like ${CUSTOM_PROPERTY_RULE_SHAPE}.`,
+    );
+
+    const [property, rawMode, ...options] = rule.map((part) => part.trim());
+    const mode = rawMode.toLowerCase();
+    assert(
+      CUSTOM_PROPERTY_RULE_MODES.has(mode),
+      `"${configKey}.rules" entry for "${property}" must use "whitelist" or "blacklist" as its second value, not "${rawMode}".`,
+    );
+
+    const ruleKey = `${normalizeName(property)}\0${mode}`;
+    assert(
+      !seenRules.has(ruleKey),
+      `Duplicate "${configKey}.rules" entry detected: "${property}" with ${mode}. Combine its options into one entry.`,
+    );
+    seenRules.add(ruleKey);
+
+    const seenOptions = new Set();
+    for (const option of options) {
+      const optionKey = normalizeName(option);
+      assert(
+        !seenOptions.has(optionKey),
+        `"${configKey}.rules" entry for "${property}" lists option "${option}" more than once.`,
+      );
+      seenOptions.add(optionKey);
+    }
+
+    return { property, mode, options };
+  });
+
+  assert(
+    !requireRules || rules.length > 0,
+    `${configPath} field "${configKey}.rules" must contain at least one rule when "${modeKey}" is "customProperty".`,
+  );
+
+  return { logic, rules };
+}
+
+// Shared by config/repository-filter.jsonc and "workflowDistribution" in config/label-test-workflow-config.jsonc.
+export function validateRepositorySelection(selection, { configPath, keyPrefix = "", defaultMode }) {
+  const modeKey = `${keyPrefix}filterMode`;
+  const filterMode = validateFilterMode(selection.filterMode, modeKey, { configPath, defaultMode });
+
+  return {
+    filterMode,
+    whitelist: validateRepositoryEntries(selection.whitelist ?? [], `${keyPrefix}whitelist`, { configPath }),
+    blacklist: validateRepositoryEntries(selection.blacklist ?? [], `${keyPrefix}blacklist`, { configPath }),
+    customProperties: validateCustomPropertyFilter(selection.customProperties, `${keyPrefix}customProperties`, {
+      configPath,
+      requireRules: filterMode === "customProperty",
+      modeKey,
+    }),
+  };
+}
+
 export function parseLabelReplacements(value) {
   if (!value || !value.trim()) {
     return [];
@@ -297,9 +396,10 @@ export function validateRepositoryFilter(repositoryFilter) {
     "config/repository-filter.jsonc must contain an object.",
   );
 
-  if (repositoryFilter.useWhitelist !== undefined) {
-    assert(typeof repositoryFilter.useWhitelist === "boolean", 'config/repository-filter.jsonc field "useWhitelist" must be a boolean.');
-  }
+  assert(
+    repositoryFilter.useWhitelist === undefined,
+    'config/repository-filter.jsonc field "useWhitelist" was replaced by "filterMode". Remove "useWhitelist" and set "filterMode" to "whitelist", "blacklist", or "customProperty".',
+  );
 
   if (repositoryFilter.automaticSync !== undefined) {
     assert(
@@ -337,9 +437,10 @@ export function validateRepositoryFilter(repositoryFilter) {
   parseLabelReplacements(labelReplacements);
 
   return {
-    useWhitelist: repositoryFilter.useWhitelist ?? false,
-    whitelist: validateRepositoryEntries(repositoryFilter.whitelist ?? [], "whitelist"),
-    blacklist: validateRepositoryEntries(repositoryFilter.blacklist ?? [], "blacklist"),
+    ...validateRepositorySelection(repositoryFilter, {
+      configPath: "config/repository-filter.jsonc",
+      defaultMode: "blacklist",
+    }),
     automaticSync: {
       enabled: automaticSync.enabled ?? false,
       deleteMissing: automaticSync.deleteMissing ?? false,
@@ -537,8 +638,9 @@ function validateStickyLabels(entries) {
 const REVIEW_REQUEST_TIMINGS = new Set(["labeled", "afterApproval"]);
 
 // Review requests ask a user or team to review a PR that has the label. "labeled" requests as soon as the
-// label is present; "afterApproval" waits for an approval from someone who is not the reviewer (or not on
-// the reviewer team). "approvedBy" optionally sets which approvals count in order to trigger the request.
+// label is present; "afterApproval" waits for an approval from someone with write access who is not the
+// reviewer (or not on the reviewer team). "approvedBy" optionally sets which approvals count in order to
+// trigger the request.
 function validateReviewRequests(entries) {
   const configKey = "reviewRequests";
   assert(
@@ -617,6 +719,86 @@ function validateStickyLabelComment(value) {
   return value;
 }
 
+// The wait-for-merge command puts "label" on a pull request until every linked pull request is merged or
+// closed. The label must also be a failing label, otherwise it would not block merging. It cannot be sticky:
+// removing the label is how a wait is cancelled. "allowedUsers" lists who may run the command.
+function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
+  const configKey = "waitForMerge";
+
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  assert(
+    typeof value === "object" && !Array.isArray(value),
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an object.`,
+  );
+
+  const hasLabel = typeof value.label === "string" && value.label.trim() !== "";
+
+  if (!hasLabel) {
+    assert(
+      value.label === undefined || value.label === "",
+      `${configKey} label must be a non-empty string.`,
+    );
+    assert(
+      value.allowedUsers === undefined && value.allowExternalRepositories === undefined,
+      `${configKey} needs a "label" when "allowedUsers" or "allowExternalRepositories" is set.`,
+    );
+    return null;
+  }
+
+  const label = value.label.trim();
+  const labelKey = normalizeName(label);
+  assert(
+    failingLabels.some((failingLabel) => normalizeName(failingLabel) === labelKey),
+    `${configKey} label "${label}" must also be listed in "failingLabels" so that it blocks merging.`,
+  );
+  assert(
+    !stickyLabels.some((entry) => normalizeName(entry.label) === labelKey),
+    `${configKey} label "${label}" cannot also be a sticky label, because removing it is how a wait is cancelled.`,
+  );
+
+  assert(
+    typeof value.allowedUsers === "string" || Array.isArray(value.allowedUsers),
+    `${configKey} allowedUsers must be a user, a "teams/<slug>" team, or a list of them.`,
+  );
+
+  const seen = new Set();
+  const allowedUsers = splitLabelMemberList(value.allowedUsers, { configKey, role: "allowedUsers" }).map((item) => {
+    const member = validateLabelMember(item, { configKey, role: "allowedUsers" });
+    const key = normalizeName(member.value);
+    assert(!seen.has(key), `${configKey} lists allowedUsers "${member.value}" more than once.`);
+    seen.add(key);
+    return member;
+  });
+
+  const allowExternalRepositories = value.allowExternalRepositories ?? false;
+  assert(
+    typeof allowExternalRepositories === "boolean",
+    `${configKey} allowExternalRepositories must be true or false.`,
+  );
+
+  return {
+    label,
+    allowedUsers,
+    allowExternalRepositories,
+  };
+}
+
+export const commandDeliveryModes = ["workflow", "dispatch"];
+
+// Chooses how "/" commands reach Label Sync: through the caller workflow distributed to every repository, or
+// through a "pull-request-comment" repository_dispatch sent to the Label Sync repository.
+function validateCommandDelivery(value) {
+  const commandDelivery = value ?? "workflow";
+  assert(
+    commandDeliveryModes.includes(commandDelivery),
+    `config/label-test-workflow-config.jsonc field "commandDelivery" must be "workflow" or "dispatch".`,
+  );
+  return commandDelivery;
+}
+
 export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   assert(
     labelTestWorkflowConfig && typeof labelTestWorkflowConfig === "object" && !Array.isArray(labelTestWorkflowConfig),
@@ -629,28 +811,27 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     'config/label-test-workflow-config.jsonc field "workflowDistribution" must contain an object.',
   );
 
+  const failingLabels = validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels");
+  const stickyLabels = validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []);
+
   return {
     requiredLabels: validateLabelNameEntries(labelTestWorkflowConfig.requiredLabels ?? [], "requiredLabels"),
-    failingLabels: validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels"),
+    failingLabels,
     ignoredPullRequestAuthors: validatePullRequestAuthorEntries(
       labelTestWorkflowConfig.ignoredPullRequestAuthors ?? [],
     ),
     repositoryLabels: validateRepositoryLabelEntries(labelTestWorkflowConfig.repositoryLabels ?? {}),
     protectedLabelApprovals: validateProtectedLabelApprovals(labelTestWorkflowConfig.protectedLabelApprovals ?? []),
-    stickyLabels: validateStickyLabels(labelTestWorkflowConfig.stickyLabels ?? []),
+    stickyLabels,
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
-    workflowDistribution: {
-      whitelist: validateRepositoryEntries(
-        workflowDistribution.whitelist ?? [],
-        "workflowDistribution.whitelist",
-        { configPath: "config/label-test-workflow-config.jsonc" },
-      ),
-      blacklist: validateRepositoryEntries(
-        workflowDistribution.blacklist ?? [],
-        "workflowDistribution.blacklist",
-        { configPath: "config/label-test-workflow-config.jsonc" },
-      ),
-    },
+    waitForMerge: validateWaitForMerge(labelTestWorkflowConfig.waitForMerge, { failingLabels, stickyLabels }),
+    commandDelivery: validateCommandDelivery(labelTestWorkflowConfig.commandDelivery),
+    // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
+    workflowDistribution: validateRepositorySelection(workflowDistribution, {
+      configPath: "config/label-test-workflow-config.jsonc",
+      keyPrefix: "workflowDistribution.",
+      defaultMode: "whitelist",
+    }),
   };
 }

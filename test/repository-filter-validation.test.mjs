@@ -19,7 +19,7 @@ test("validateRepositoryFilter supplies automatic sync defaults", () => {
 
 test("validateRepositoryFilter preserves explicit automatic sync settings", () => {
   const config = validateRepositoryFilter({
-    useWhitelist: false,
+    filterMode: "blacklist",
     whitelist: [],
     blacklist: [],
     automaticSync: {

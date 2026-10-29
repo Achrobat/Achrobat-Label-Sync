@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  commandCallerWorkflowPath,
   generateCallerWorkflow,
   generateCallerWorkflows,
+  legacyCallerWorkflowPaths,
   normalizeDeliveryMode,
   parseTargetRepositories,
   preflightDistributionRepository,
   processDistributionRepositories,
+  removedCallerWorkflowPaths,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
   writeCallerWorkflows,
@@ -573,8 +576,8 @@ test("selectDistributionRepositories applies whitelist mode and skips the source
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "whitelist",
     workflowDistribution: {
+      filterMode: "whitelist",
       whitelist: new Set(["alpha", "example/beta", "label-sync"]),
       blacklist: new Set([]),
     },
@@ -590,8 +593,8 @@ test("selectDistributionRepositories applies blacklist mode", () => {
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "blacklist",
     workflowDistribution: {
+      filterMode: "blacklist",
       whitelist: new Set([]),
       blacklist: new Set(["beta"]),
     },
@@ -607,9 +610,9 @@ test("selectDistributionRepositories lets target repository override take priori
   const selected = selectDistributionRepositories(repositories, {
     orgName: "example",
     sourceRepository: "example/label-sync",
-    mode: "blacklist",
     targetRepositories: new Set(["beta"]),
     workflowDistribution: {
+      filterMode: "blacklist",
       whitelist: new Set([]),
       blacklist: new Set(["beta", "gamma"]),
     },
@@ -633,9 +636,9 @@ test("selectDistributionRepositories rejects unknown target repository overrides
     () => selectDistributionRepositories(repositories, {
       orgName: "example",
       sourceRepository: "example/label-sync",
-      mode: "whitelist",
       targetRepositories: new Set(["missing-repo"]),
       workflowDistribution: {
+        filterMode: "whitelist",
         whitelist: new Set([]),
         blacklist: new Set([]),
       },
@@ -669,7 +672,7 @@ test("generateCallerWorkflow calls the distributing repository reusable workflow
   assert.equal(workflow.match(/^ {6}label_sync_[a-z]+:/gm).length, 2);
 });
 
-test("generateCallerWorkflows emits one dispatcher job and one unprivileged review signal workflow", () => {
+test("generateCallerWorkflows emits one dispatcher job, one unprivileged review signal workflow and one command workflow", () => {
   const workflows = generateCallerWorkflows({
     sourceRepository: "fork-owner/Label-Sync",
     sourceRef: "main",
@@ -679,6 +682,7 @@ test("generateCallerWorkflows emits one dispatcher job and one unprivileged revi
   assert.deepEqual([...byPath.keys()], [
     ".github/workflows/label-test.yml",
     ".github/workflows/label-test-review-refresh.yml",
+    ".github/workflows/label-test-commands.yml",
   ]);
 
   const policy = byPath.get(".github/workflows/label-test.yml");
@@ -739,6 +743,28 @@ test("generateCallerWorkflows emits one dispatcher job and one unprivileged revi
   assert.match(refresh, /upload-artifact/);
   assert.match(refresh, /label-test-review-context/);
   assert.doesNotMatch(refresh, /workflow_run:/);
+
+  const commands = byPath.get(".github/workflows/label-test-commands.yml");
+  assert.match(commands, /name: Label Test Commands/);
+  assert.match(commands, /issue_comment:/);
+  assert.deepEqual(commands.match(/^ {6}- [a-z_]+$/gm).map((line) => line.trim().slice(2)), [
+    "created",
+    "edited",
+    "deleted",
+  ]);
+  // Only comments on pull requests that start with "/" and were not written by a bot start a runner. Bot
+  // edits matter: Label Sync edits its own tracking comment with an App token, which would otherwise loop.
+  assert.match(commands, /github\.event\.issue\.pull_request/);
+  assert.match(commands, /github\.event\.comment\.user\.type != 'Bot'/);
+  assert.match(commands, /startsWith\(github\.event\.comment\.body, '\/'\)/);
+  assert.match(commands, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test-command\.yml@main/);
+  assert.match(commands, /secrets: inherit/);
+  // Commands act with the configured token from the inherited secrets, so GITHUB_TOKEN only reads contents.
+  assert.match(commands, /^permissions:\n {2}contents: read\n/m);
+  assert.doesNotMatch(commands, /: write/);
+  assert.doesNotMatch(commands, /pull_request_target:/);
+  assert.doesNotMatch(commands, /checks: write/);
+  assert.equal(commands.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
 });
 
 test("normalizeDeliveryMode accepts workflow choice labels", () => {
@@ -836,4 +862,65 @@ test("renderDistributionSummaryMarkdown shows the failed stage and repositories 
   assert.match(markdown, /Failed during workflow_file: write rejected/);
   assert.match(markdown, /Not Processed: Stopped after failure in example\/two\./);
   assert.match(markdown, /\[example\/empty\].* - empty/);
+});
+
+test("dispatch command delivery leaves out the command caller and removes it from repositories", () => {
+  const workflowPaths = generateCallerWorkflows({
+    sourceRepository: "fork-owner/Label-Sync",
+    sourceRef: "main",
+    commandDelivery: "dispatch",
+  }).map((workflow) => workflow.path);
+
+  assert.deepEqual(workflowPaths, [
+    ".github/workflows/label-test.yml",
+    ".github/workflows/label-test-review-refresh.yml",
+  ]);
+  assert.equal(commandCallerWorkflowPath, ".github/workflows/label-test-commands.yml");
+  assert.deepEqual(removedCallerWorkflowPaths({ commandDelivery: "dispatch" }), [
+    ...legacyCallerWorkflowPaths,
+    commandCallerWorkflowPath,
+  ]);
+  // Workflow delivery installs the caller and so never deletes it.
+  assert.deepEqual(removedCallerWorkflowPaths({ commandDelivery: "workflow" }), legacyCallerWorkflowPaths);
+  assert.deepEqual(removedCallerWorkflowPaths(), legacyCallerWorkflowPaths);
+  assert.ok(generateCallerWorkflows({ sourceRepository: "o/r", sourceRef: "main" })
+    .some((workflow) => workflow.path === commandCallerWorkflowPath));
+});
+
+test("writeCallerWorkflows deletes an installed command caller when commands are dispatched", async () => {
+  const { api, calls } = createFakeDistributionApi({
+    files: { main: { ...currentWorkflowFiles, [commandCallerWorkflowPath]: "old caller" } },
+  });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { legacyPaths: removedCallerWorkflowPaths({ commandDelivery: "dispatch" }) }),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+  const commit = findCommit(calls);
+  assert.deepEqual(commit.options.additions, []);
+  assert.deepEqual(commit.options.deletions, [commandCallerWorkflowPath]);
+  assert.notEqual(result.status, "unchanged");
+});
+
+test("processDistributionRepositories forwards the paths to remove to its writer", async () => {
+  let receivedLegacyPaths;
+  const legacyPaths = removedCallerWorkflowPaths({ commandDelivery: "dispatch" });
+
+  await processDistributionRepositories([{ full_name: "example/ready" }], {
+    token: "token",
+    deliveryMode: "direct_commit",
+    workflows: workflowSet,
+    legacyPaths,
+    dryRun: false,
+    preflight: async () => ({ defaultBranch: "main", defaultRef: { object: { sha: "default-sha" } } }),
+    write: async (token, repository, options) => {
+      receivedLegacyPaths = options.legacyPaths;
+      return { repository: repository.full_name, status: "updated", branch: "main" };
+    },
+  });
+
+  assert.deepEqual(receivedLegacyPaths, legacyPaths);
 });

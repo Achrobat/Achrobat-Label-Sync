@@ -8,10 +8,42 @@ All project config lives in `config/` and uses JSONC, so comments are allowed.
 - `config/labels.jsonc`: managed labels to create or update across the organization
 - `config/deleted-labels.jsonc`: labels that should be deleted from target repositories
 - `config/github-default-labels.jsonc`: exact GitHub default label specs that can be pruned
-- `config/repository-filter.jsonc`: whitelist or blacklist rules for repository selection and automatic sync settings
+- `config/repository-filter.jsonc`: whitelist, blacklist, or custom property rules for repository selection and automatic sync settings
 - `config/label-test-workflow-config.jsonc`: PR label-test rules and separate caller workflow distribution repository lists
 
 The configured source repository is always skipped by repository filtering. You do not need to add it to the whitelist or blacklist.
+
+## Repository filter
+
+`filterMode` in `config/repository-filter.jsonc` chooses which repositories `Org-Label-Sync`, `Inventory-Labels`, and `Remove-Labels` work on:
+
+- `whitelist`: only the repositories listed in `whitelist`
+- `blacklist`: every discovered organization repository except those listed in `blacklist`
+- `customProperty`: repositories chosen by their organization custom property values, using the rules in `customProperties`
+
+```jsonc
+"filterMode": "customProperty",
+"customProperties": {
+  "logic": "AND",
+  "rules": [
+    ["Team", "whitelist", "Core", "Addons"],
+    ["Lifecycle", "blacklist", "Deprecated"]
+  ]
+}
+```
+
+Each rule is one list: the property name, `whitelist` or `blacklist`, then one or more options.
+
+- A `whitelist` rule passes when the repository's value is one of the listed options.
+- A `blacklist` rule passes when the repository's value is none of the listed options. Repositories with no value for the property pass.
+- `logic` combines rules: `AND` requires every rule to pass, `OR` requires at least one.
+- Property names and options are compared without case sensitivity. Multi-select properties pass a `whitelist` rule when any selected value is listed. True/false properties use `"true"` or `"false"`. Unset properties use the organization's default value when one exists.
+
+When a workflow runs in `customProperty` mode, it reads the organization's custom property definitions and fails if a rule names a property that does not exist or an option that is not one of a select property's allowed values. That keeps a typo from selecting nothing in a `whitelist` rule or everything in a `blacklist` rule. This mode needs the organization **Custom properties: Read** permission on the Label Sync token; see [Authentication](authentication.md).
+
+The workflow `repositories` input still overrides the configured filter for a single run.
+
+`workflowDistribution` in `config/label-test-workflow-config.jsonc` uses the same `filterMode`, `whitelist`, `blacklist`, and `customProperties` format for `05 - Distribute-Label-Workflow`. It defaults to `whitelist` when `filterMode` is omitted.
 
 ## Safe defaults
 
@@ -35,10 +67,12 @@ Validation checks include:
 - Duplicate labels
 - Invalid label colors
 - Invalid repository names
-- Repository filter shape
+- Repository filter shape, `filterMode`, and custom property rule shape
 - Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
 - Label Test user and `teams/<slug>` approver, sticky label remover, and review request reviewer syntax
+- that the `waitForMerge` label is also a failing label and not a sticky label
+- that `commandDelivery` is `workflow` or `dispatch`
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 

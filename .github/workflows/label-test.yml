@@ -27,14 +27,13 @@ on:
 # artifact is untrusted input and is validated against the workflow run's recorded head
 # SHA before the configured PAT or GitHub App token reruns the authoritative policy run.
 
-# pull-requests: write is only used to re-apply sticky labels and post the one-time sticky label
-# notice. The configured PAT or GitHub App token is preferred for both; this GITHUB_TOKEN grant is the
-# fallback when no configured token exists.
+# Every API call uses the configured PAT or GitHub App token. GITHUB_TOKEN is only used to download the
+# review artifact (actions: read) and to post the ignored-author status (statuses: write).
 permissions:
   actions: read
   contents: read
   issues: read
-  pull-requests: write
+  pull-requests: read
   statuses: write
 
 jobs:
@@ -74,7 +73,6 @@ jobs:
         env:
           AUTH_MODE: pat
           PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/create-github-auth-token.mjs
 
       - name: Resolve GitHub App auth token
@@ -95,7 +93,6 @@ jobs:
           LABEL_EVENT_ACTION: ${{ github.event.action }}
           LABEL_EVENT_LABEL: ${{ github.event.label.name }}
           LABEL_EVENT_SENDER: ${{ github.event.sender.login }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-pr-label-policy.mjs
 
       - name: Rerun authoritative Label Test

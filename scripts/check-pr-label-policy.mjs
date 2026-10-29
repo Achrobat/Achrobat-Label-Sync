@@ -16,6 +16,12 @@ import {
   isIgnoredPullRequestAuthor,
   planReviewRequests,
 } from "./lib/label-test-workflow.mjs";
+import { isWaitForMergeEnabled } from "./lib/wait-for-merge.mjs";
+import {
+  cancelWaitForMerge,
+  createWaitForMergeActorChecker,
+  reconcileWaitForMerge,
+} from "./lib/wait-for-merge-runner.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -157,19 +163,6 @@ function createAutomationActorChecker(token) {
   };
 }
 
-// Review requests made with the GITHUB_TOKEN fallback appear in the timeline as github-actions[bot], so that
-// login also counts as Label Sync when deciding whether a request is ours to withdraw. It is not added to
-// the sticky label checker, where it would let any workflow in the target repository remove sticky labels.
-function createReviewRequesterChecker(isAutomationActor) {
-  return async (login) => {
-    if (!process.env.LABEL_SYNC_TOKEN && normalizeName(login) === "github-actions[bot]") {
-      return true;
-    }
-
-    return isAutomationActor(login);
-  };
-}
-
 // Posts the sticky label notice once per label per pull request. The notice is informational, so a
 // failure here is reported as a warning and does not change the Label Test result.
 async function announceStickyLabels({ token, targetRepository, pullRequestNumber, restorations }) {
@@ -289,6 +282,35 @@ function createTeamMembershipChecker(token, orgName) {
   };
 }
 
+// GitHub records each reviewer's relationship to the repository on the review. Only owners, organization
+// members and collaborators can have write access, so anyone else is rejected without an API call. For the
+// rest, the repository permission decides: admin, maintain and write count, triage and read do not.
+const ASSOCIATIONS_THAT_MAY_HAVE_WRITE_ACCESS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+function createWriteAccessChecker(token, repository) {
+  const cache = new Map();
+
+  return async (login, association) => {
+    if (typeof association === "string" && !ASSOCIATIONS_THAT_MAY_HAVE_WRITE_ACCESS.has(association)) {
+      return false;
+    }
+
+    const key = normalizeName(login);
+
+    if (!cache.has(key)) {
+      cache.set(key, githubRequest(
+        token,
+        "GET",
+        `/repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`,
+        null,
+        { allowNotFound: true },
+      ).then((result) => result?.permission === "admin" || result?.permission === "write"));
+    }
+
+    return cache.get(key);
+  };
+}
+
 function describeReviewRequestFailure(reviewer, error) {
   const hint = reviewer.type === "team" && (error.status === 403 || error.status === 404 || error.status === 422)
     ? " Team review requests need the configured PAT or GitHub App token, and the team must have access to this repository."
@@ -334,7 +356,8 @@ async function applyReviewRequests({
       pullRequestAuthor: pullRequestIssue?.user?.login,
       isDraft: pullRequest?.draft === true,
       isTeamMember,
-      isAutomationActor: createReviewRequesterChecker(isAutomationActor),
+      isAutomationActor,
+      hasWriteAccess: createWriteAccessChecker(token, targetRepository),
     });
   } catch (error) {
     console.log(`::warning title=Review requests skipped::${escapeWorkflowCommand(error.message)}`);
@@ -359,6 +382,60 @@ async function applyReviewRequests({
       const message = describeReviewRequestFailure(withdrawal.reviewer, error);
       console.log(`::warning title=Review request withdrawal failed::${escapeWorkflowCommand(message)}`);
     }
+  }
+}
+
+// Wait-for-merge: when the label was just removed by someone other than Label Sync, the tracking comment is
+// marked cancelled. When the label is present, the wait is completed here if every linked pull request is
+// already merged or closed, so the policy below is evaluated without the label. The central Wait-For-Merge
+// workflow does the same across the organization; this run is just the cheapest moment to notice. Failures
+// are warnings: the label stays, so the check stays as strict as before.
+async function applyWaitForMerge({
+  token,
+  config,
+  targetRepository,
+  pullRequestNumber,
+  pullRequestIssue,
+  labels,
+  isTeamMember,
+  loadIssueEvents,
+}) {
+  if (!isWaitForMergeEnabled(config)) {
+    return labels;
+  }
+
+  const request = (method, apiPath, body) => githubRequest(token, method, apiPath, body);
+  const isAutomationActor = createWaitForMergeActorChecker(request);
+  const labelKey = normalizeName(config.waitForMerge.label);
+
+  try {
+    if (!labels.some((label) => normalizeName(label?.name ?? "") === labelKey)) {
+      await cancelWaitForMerge({
+        request,
+        config,
+        repository: targetRepository,
+        pullRequestNumber,
+        triggeringEvent: readTriggeringLabelEvent(),
+        isAutomationActor,
+      });
+      return labels;
+    }
+
+    const outcome = await reconcileWaitForMerge({
+      request,
+      config,
+      repository: targetRepository,
+      pullRequestNumber,
+      mode: "check",
+      issue: { ...pullRequestIssue, labels },
+      loadIssueEvents,
+      isTeamMember,
+      isAutomationActor,
+    });
+    return outcome.labels;
+  } catch (error) {
+    console.log(`::warning title=Wait for merge skipped::${escapeWorkflowCommand(error.message)}`);
+    return labels;
   }
 }
 
@@ -387,11 +464,11 @@ async function main() {
     return;
   }
 
-  const token = process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
+  const token = process.env.LABEL_SYNC_TOKEN;
   const targetRepository = process.env.TARGET_REPOSITORY;
   const pullRequestNumber = process.env.PULL_REQUEST_NUMBER;
 
-  assert(token, "LABEL_SYNC_TOKEN or GITHUB_TOKEN is required unless --validate-only is used.");
+  assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
   assert(targetRepository, "TARGET_REPOSITORY is required.");
   assert(pullRequestNumber && /^\d+$/.test(pullRequestNumber), "PULL_REQUEST_NUMBER must be a number.");
 
@@ -399,7 +476,7 @@ async function main() {
   const isTeamMember = createTeamMembershipChecker(token, properties.organization);
   const isAutomationActor = createAutomationActorChecker(token);
   const loadIssueEvents = createIssueEventsLoader(token, targetRepository, pullRequestNumber);
-  const labels = await restoreStickyLabels({
+  const labelsAfterSticky = await restoreStickyLabels({
     token,
     config,
     targetRepository,
@@ -408,6 +485,16 @@ async function main() {
     labels: Array.isArray(pullRequestIssue.labels) ? pullRequestIssue.labels : [],
     isTeamMember,
     isAutomationActor,
+    loadIssueEvents,
+  });
+  const labels = await applyWaitForMerge({
+    token,
+    config,
+    targetRepository,
+    pullRequestNumber,
+    pullRequestIssue,
+    labels: labelsAfterSticky,
+    isTeamMember,
     loadIssueEvents,
   });
   const reviews = await getPullRequestReviews(token, targetRepository, pullRequestNumber);

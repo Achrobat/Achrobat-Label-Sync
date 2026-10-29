@@ -39,7 +39,7 @@ async function createValidationWorkspace() {
     },
   ]);
   await writeJson(path.join(configPath, "repository-filter.jsonc"), {
-    useWhitelist: true,
+    filterMode: "whitelist",
     whitelist: [],
     blacklist: [],
   });

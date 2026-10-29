@@ -72,12 +72,14 @@
 
   // Review requests ask a user or team to review a PR that has the label. "when" picks the timing:
   //   "labeled" (default): request the reviewer as soon as the label is on the PR.
-  //   "afterApproval": wait until someone who is not the reviewer (and not on the reviewer team) approves,
-  //   then request the reviewer. If the reviewer has already approved, nothing is requested.
+  //   "afterApproval": wait until someone with write access to the repository, who is not the reviewer (and
+  //   not on the reviewer team), approves, then request the reviewer. Approvals from people without write
+  //   access, such as contributors outside the organization, never count. If the reviewer has already
+  //   approved, nothing is requested.
   // "approvedBy" (optional, afterApproval only) sets which approvals count in order to trigger the request,
-  // as a comma-separated list of users or teams. Leave it out and any approval from outside the reviewer
-  // team triggers it. It only affects the request, not whether Label Test passes; that is
-  // protectedLabelApprovals.
+  // as a comma-separated list of users or teams; they still need write access. Leave it out and any approval
+  // from someone with write access outside the reviewer team triggers it. It only affects the request, not
+  // whether Label Test passes; that is protectedLabelApprovals.
   // Nothing is requested on draft PRs. Each reviewer is requested once per label application or new
   // triggering approval, so a request removed by hand stays removed. If the label is removed, a pending
   // request made by Label Sync is withdrawn. Team reviewers need the configured PAT or GitHub App token,
@@ -91,16 +93,58 @@
     { "label": "Bug Fix", "reviewer": "UltraProdigy", "when": "afterApproval", "approvedBy": "NotUltraProdigy" }
   ],
 
-  // Separate from config/repository-filter.jsonc. The distributor workflow chooses whitelist or blacklist mode
-  // when it is manually run.
+  // Wait for merge: someone listed in "allowedUsers" comments "/wait-for-merge <link>" on a PR, where the link is
+  // a PR URL, "owner/repo#123", or "#123". Label Test adds "label" until every linked PR is merged or closed,
+  // then removes it and comments to tell the PR author and whoever ran the command that the PR is ready to
+  // merge. Several commands stack. Removing the label by hand cancels the wait. "label" must also be listed in
+  // "failingLabels" so it blocks merging, and it cannot be a sticky label. "allowExternalRepositories"
+  // (default false) also allows links to PRs outside the organization. Leave "label" out to turn it off.
+  "waitForMerge": {
+    // "label": "Waiting on PR",
+    // "allowedUsers": "teams/maintainers, UltraProdigy",
+    // "allowExternalRepositories": false
+  },
+
+  // How "/" commands in pull request comments reach Label Sync. Only one path is active: commands that arrive
+  // the other way are ignored.
+  // "workflow" (default): 05 - Distribute-Label-Workflow installs a small caller workflow in each repository
+  // that hands command comments to Label Sync.
+  // "dispatch": no caller is installed, and 05 removes it where it exists. Instead, something that watches the
+  // organization, such as a GitHub App webhook handler, sends a "pull-request-comment" repository_dispatch to
+  // this repository for each pull request comment. Needs the configured PAT or GitHub App token.
+  "commandDelivery": "workflow",
+
+  // Chooses which repositories 05 - Distribute-Label-Workflow installs the Label Test workflows in. This is
+  // separate from config/repository-filter.jsonc but uses the same format. The workflow's optional
+  // "repositories" input overrides it for a single run.
   "workflowDistribution": {
+    // "whitelist": only the repositories listed in "whitelist".
+    // "blacklist": every discovered org repository except those listed in "blacklist".
+    // "customProperty": repositories chosen by the rules in "customProperties". The Label Sync token needs the
+    //                   organization "Custom properties" read permission for this mode.
+    "filterMode": "whitelist",
+
     "whitelist": [
       // "sandbox-repo",
       // "your-org-name/important-repo"
     ],
+
     "blacklist": [
       // "do-not-touch",
       // "your-org-name/private-internal-tools"
-    ]
+    ],
+
+    // "logic": "AND" means a repository must pass every rule, "OR" means it must pass at least one.
+    // Each rule is one list: ["Property Name", "whitelist" or "blacklist", "Option", "Another Option", ...]
+    //   "whitelist": the repository's value for the property must be one of the listed options.
+    //   "blacklist": the repository's value must not be any of the listed options. Repositories with no value pass.
+    // Options match the property value exactly, ignoring case. For true/false properties use "true" or "false".
+    "customProperties": {
+      "logic": "AND",
+      "rules": [
+        // ["Team", "whitelist", "Core", "Addons"],
+        // ["Lifecycle", "blacklist", "Deprecated"]
+      ]
+    }
   }
 }

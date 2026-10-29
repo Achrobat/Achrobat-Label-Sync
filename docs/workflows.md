@@ -1,6 +1,6 @@
 # Workflows
 
-This repository includes eleven operational GitHub Actions workflows:
+This repository includes fourteen operational GitHub Actions workflows:
 
 - `02 - Config-Label-Sync`
 - `Config-Reset`
@@ -8,13 +8,16 @@ This repository includes eleven operational GitHub Actions workflows:
 - `03 - Inventory-Labels`
 - `Refresh Label Test After Review`
 - `Label Test`
+- `Label Test Command`
+- `Label Test Command Dispatch`
+- `Wait-For-Merge`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
 - `01 - Org-Label-Sync`
 - `04 - Remove-Labels`
 - `06 - Transfer-Labels`
 
-`Label Test`, `Refresh Label Test After Review`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
+`Label Test`, `Refresh Label Test After Review`, `Label Test Command`, `Label Test Command Dispatch`, `Wait-For-Merge`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
 
 ## Recommended sync flow
 
@@ -65,7 +68,7 @@ The workflow also checks for automatic runs every day at midnight UTC. Configure
 
 Set `enabled` to `true` to allow the daily run. `labelReplacements` uses the same `old=new, old2=new2` format as the manual input. The schedule itself must be changed in `.github/workflows/01-org-label-sync.yml` because GitHub evaluates workflow schedules before loading repository config.
 
-Automatic runs perform the normal full organization sync after applying the configured whitelist or blacklist. Repositories that already match remain unchanged, new repositories receive the managed labels, and label drift in existing repositories is corrected.
+Automatic runs perform the normal full organization sync after applying the configured repository filter (whitelist, blacklist, or custom property rules). Repositories that already match remain unchanged, new repositories receive the managed labels, and label drift in existing repositories is corrected.
 
 When changes are made, the workflow writes the changelog Markdown directly to the GitHub Actions workflow run summary. Dry runs use the same summary format and are marked as test-mode output. If the run fails after processing some repositories, the workflow still writes the accumulated changelog before failing. Workflow summaries are retained according to GitHub Actions run retention settings.
 

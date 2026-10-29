@@ -178,7 +178,7 @@ export async function rerunLabelTestForPullRequest({
   request = githubRequest,
 }) {
   if (!token) {
-    throw new Error("LABEL_SYNC_TOKEN or GITHUB_TOKEN is required.");
+    throw new Error("LABEL_SYNC_TOKEN is required.");
   }
 
   if (typeof repository !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repository)) {
@@ -256,7 +256,7 @@ export async function rerunLabelTestForReviewSignal({
   request = githubRequest,
 }) {
   if (!token) {
-    throw new Error("LABEL_SYNC_TOKEN or GITHUB_TOKEN is required.");
+    throw new Error("LABEL_SYNC_TOKEN is required.");
   }
 
   if (typeof repository !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repository)) {
@@ -350,7 +350,8 @@ async function readPullRequestNumber() {
 }
 
 async function main() {
-  const token = process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
+  const token = process.env.LABEL_SYNC_TOKEN;
+  // The ignored-author status is the one thing posted with the workflow's own GITHUB_TOKEN.
   const statusToken = process.env.GITHUB_TOKEN;
   const repository = process.env.TARGET_REPOSITORY;
   const pullRequestNumber = await readPullRequestNumber();

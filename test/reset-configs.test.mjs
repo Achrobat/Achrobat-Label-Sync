@@ -66,9 +66,16 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
       stickyLabels: [],
       stickyLabelComment: false,
       reviewRequests: [],
+      waitForMerge: {},
+      commandDelivery: "workflow",
       workflowDistribution: {
+        filterMode: "whitelist",
         whitelist: [],
         blacklist: [],
+        customProperties: {
+          logic: "AND",
+          rules: [],
+        },
       },
     });
   } finally {
@@ -86,7 +93,7 @@ test("reset-configs restores automatic sync defaults in repository-filter.jsonc"
     await fs.writeFile(
       configPath,
       JSON.stringify({
-        useWhitelist: false,
+        filterMode: "blacklist",
         automaticSync: {
           enabled: true,
           deleteMissing: true,
@@ -115,7 +122,7 @@ test("reset-configs restores automatic sync defaults in repository-filter.jsonc"
 
     assert.match(stdout, /Reset config\/repository-filter\.jsonc/);
     assert.deepEqual(resetConfig, {
-      useWhitelist: true,
+      filterMode: "whitelist",
       automaticSync: {
         enabled: false,
         deleteMissing: false,
@@ -124,6 +131,10 @@ test("reset-configs restores automatic sync defaults in repository-filter.jsonc"
       },
       whitelist: [],
       blacklist: [],
+      customProperties: {
+        logic: "AND",
+        rules: [],
+      },
     });
   } finally {
     await fs.rm(workspace, { force: true, recursive: true });

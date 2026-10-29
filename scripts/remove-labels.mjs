@@ -3,13 +3,17 @@ import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties, validateRepositoryFilter } from "./lib/config-validation.mjs";
 import { renderRemoveLabelsSection, writeChangelog } from "./lib/changelog-utils.mjs";
 import {
+  activeFilterEntryCount,
+  describeCustomPropertyRules,
   filterRepositoriesForWriteMode,
   filterRepositories,
+  formatFilterMode,
   isSourceRepository,
   parseTokenPermissions,
   repositoryAliases,
   repositoryMatchesEntries,
 } from "./lib/repository-selection.mjs";
+import { loadRepositoryCustomProperties } from "./lib/custom-properties.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -54,7 +58,7 @@ function formatRepositoryFilterMode(usingTargetRepositoryOverride, activeFilterM
     return "Custom";
   }
 
-  return activeFilterMode === "whitelist" ? "Whitelist" : "Blacklist";
+  return formatFilterMode(activeFilterMode);
 }
 
 function summarizeChangelogResults(results) {
@@ -274,12 +278,16 @@ async function main() {
     defaultSourceRepository: process.env.SOURCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY ?? "",
   });
   const repositoryFilter = validateRepositoryFilter(await readJsonc(repositoryFilterPath));
-  const activeFilterCount = repositoryFilter.useWhitelist ? repositoryFilter.whitelist.size : repositoryFilter.blacklist.size;
-  const activeFilterMode = repositoryFilter.useWhitelist ? "whitelist" : "blacklist";
+  const activeFilterCount = activeFilterEntryCount(repositoryFilter);
+  const activeFilterMode = repositoryFilter.filterMode;
 
   console.log(
     `Loaded organization "${properties.organization}" and ${activeFilterCount} active repository filter entries from config/repository-filter.jsonc (mode=${activeFilterMode}).`,
   );
+
+  if (activeFilterMode === "customProperty") {
+    console.log(`Custom property rules: ${describeCustomPropertyRules(repositoryFilter.customProperties)}.`);
+  }
 
   if (validateOnly) {
     console.log("Configuration is valid.");
@@ -292,7 +300,15 @@ async function main() {
   assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
   const tokenPermissions = parseTokenPermissions(process.env.LABEL_SYNC_TOKEN_PERMISSIONS);
 
-  const discoveredRepositories = await getOrganizationRepositories(token, properties.organization);
+  const organizationRepositories = await getOrganizationRepositories(token, properties.organization);
+  const discoveredRepositories = targetRepositoryFilter === null && repositoryFilter.filterMode === "customProperty"
+    ? await loadRepositoryCustomProperties(organizationRepositories, {
+      request: (method, apiPath) => githubRequest(token, method, apiPath),
+      orgName: properties.organization,
+      customProperties: repositoryFilter.customProperties,
+      configPath: "config/repository-filter.jsonc",
+    })
+    : organizationRepositories;
   const usingTargetRepositoryOverride = targetRepositoryFilter !== null;
   const selectedRepositories = usingTargetRepositoryOverride
     ? applyTargetRepositoryOverride(discoveredRepositories, properties.organization, properties.sourceRepository)
