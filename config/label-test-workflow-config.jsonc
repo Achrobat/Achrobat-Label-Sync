@@ -82,6 +82,15 @@
     // "allowExternalRepositories": false
   },
 
+  // How "/" commands in pull request comments reach Label Sync. Only one path is active: commands that arrive
+  // the other way are ignored.
+  // "workflow" (default): 05 - Distribute-Label-Workflow installs a small caller workflow in each repository
+  // that hands command comments to Label Sync.
+  // "dispatch": no caller is installed, and 05 removes it where it exists. Instead, something that watches the
+  // organization, such as a GitHub App webhook handler, sends a "pull-request-comment" repository_dispatch to
+  // this repository for each pull request comment. Needs the configured PAT or GitHub App token.
+  "commandDelivery": "workflow",
+
   // Chooses which repositories 05 - Distribute-Label-Workflow installs the Label Test workflows in. This is
   // separate from config/repository-filter.jsonc but uses the same format. The workflow's optional
   // "repositories" input overrides it for a single run.

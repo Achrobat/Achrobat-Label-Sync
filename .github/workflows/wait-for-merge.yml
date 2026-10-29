@@ -45,7 +45,6 @@ jobs:
         env:
           AUTH_MODE: pat
           PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/create-github-auth-token.mjs
 
       - name: Resolve GitHub App auth token

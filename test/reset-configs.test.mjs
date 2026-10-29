@@ -67,6 +67,7 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
       stickyLabelComment: false,
       reviewRequests: [],
       waitForMerge: {},
+      commandDelivery: "workflow",
       workflowDistribution: {
         filterMode: "whitelist",
         whitelist: [],

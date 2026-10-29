@@ -203,7 +203,8 @@ jobs:
 // decides what each command does. New commands therefore need no redistribution. The job-level condition keeps
 // ordinary comments, issue comments and bot comments from starting a runner; GitHub still lists those runs as
 // skipped. issue_comment runs from the default branch with repository secrets, which is safe because the
-// reusable workflow never checks out pull request code.
+// reusable workflow never checks out pull request code. Commands act with the configured PAT or GitHub App
+// token from those secrets, so the caller grants GITHUB_TOKEN nothing beyond reading contents.
 export function generateCommandWorkflow({ sourceRepository, sourceRef }) {
   return `name: Label Test Commands
 
@@ -224,11 +225,6 @@ permissions:
 jobs:
   label-test-command:
     if: \${{ github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && startsWith(github.event.comment.body, '/') }}
-    permissions:
-      actions: write
-      contents: read
-      issues: write
-      pull-requests: write
     uses: ${sourceRepository}/.github/workflows/label-test-command.yml@${sourceRef}
     with:
       label_sync_repository: ${sourceRepository}
@@ -237,8 +233,12 @@ jobs:
 `;
 }
 
-export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
-  return [
+export const commandCallerWorkflowPath = ".github/workflows/label-test-commands.yml";
+
+// With "commandDelivery": "dispatch", commands reach Label Sync through a repository_dispatch instead, so the
+// command caller is not installed. removedCallerWorkflowPaths then lists it for removal.
+export function generateCallerWorkflows({ sourceRepository, sourceRef, commandDelivery = "workflow" }) {
+  const workflows = [
     {
       path: ".github/workflows/label-test.yml",
       content: generateCallerWorkflow({ sourceRepository, sourceRef }),
@@ -247,11 +247,16 @@ export function generateCallerWorkflows({ sourceRepository, sourceRef }) {
       path: ".github/workflows/label-test-review-refresh.yml",
       content: generateReviewRefreshWorkflow({ sourceRepository, sourceRef }),
     },
-    {
-      path: ".github/workflows/label-test-commands.yml",
-      content: generateCommandWorkflow({ sourceRepository, sourceRef }),
-    },
   ];
+
+  if (commandDelivery === "workflow") {
+    workflows.push({
+      path: commandCallerWorkflowPath,
+      content: generateCommandWorkflow({ sourceRepository, sourceRef }),
+    });
+  }
+
+  return workflows;
 }
 
 export function normalizeDeliveryMode(value) {
@@ -616,6 +621,14 @@ export const legacyCallerWorkflowPaths = [
   ".github/workflows/label-test-review-signal.yml",
 ];
 
+// Files distribution deletes from target repositories: earlier layouts, plus the command caller when commands
+// are delivered by repository_dispatch.
+export function removedCallerWorkflowPaths({ commandDelivery = "workflow" } = {}) {
+  return commandDelivery === "dispatch"
+    ? [...legacyCallerWorkflowPaths, commandCallerWorkflowPath]
+    : [...legacyCallerWorkflowPaths];
+}
+
 export const distributionCommitMessage = "Update Label Test workflows";
 
 function decodeFileContent(file) {
@@ -916,6 +929,7 @@ export async function processDistributionRepositories(
     token,
     deliveryMode,
     workflows,
+    legacyPaths = legacyCallerWorkflowPaths,
     dryRun,
     api = defaultDistributionApi,
     preflight = preflightDistributionRepository,
@@ -958,6 +972,7 @@ export async function processDistributionRepositories(
       results.push(await write(token, repository, {
         deliveryMode,
         workflows,
+        legacyPaths,
         dryRun,
         defaultBranch: repositoryState.defaultBranch,
         defaultRef: repositoryState.defaultRef,
@@ -1080,7 +1095,14 @@ async function main() {
       tokenWritePermission: requiredTokenPermissions,
     },
   );
-  const workflows = generateCallerWorkflows({ sourceRepository, sourceRef });
+  const { commandDelivery } = config;
+  console.log(
+    commandDelivery === "dispatch"
+      ? `Command delivery: dispatch. ${commandCallerWorkflowPath} is not installed and is removed where it exists.`
+      : "Command delivery: workflow.",
+  );
+  const workflows = generateCallerWorkflows({ sourceRepository, sourceRef, commandDelivery });
+  const legacyPaths = removedCallerWorkflowPaths({ commandDelivery });
   const {
     results,
     skippedRepositories: processingSkips,
@@ -1089,6 +1111,7 @@ async function main() {
     token,
     deliveryMode,
     workflows,
+    legacyPaths,
     dryRun,
   });
   const skippedRepositories = [...eligibilitySkips, ...processingSkips];

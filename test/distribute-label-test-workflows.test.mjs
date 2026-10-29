@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  commandCallerWorkflowPath,
   generateCallerWorkflow,
   generateCallerWorkflows,
+  legacyCallerWorkflowPaths,
   normalizeDeliveryMode,
   parseTargetRepositories,
   preflightDistributionRepository,
   processDistributionRepositories,
+  removedCallerWorkflowPaths,
   renderDistributionSummaryMarkdown,
   selectDistributionRepositories,
   writeCallerWorkflows,
@@ -756,9 +759,9 @@ test("generateCallerWorkflows emits one dispatcher job, one unprivileged review 
   assert.match(commands, /startsWith\(github\.event\.comment\.body, '\/'\)/);
   assert.match(commands, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/label-test-command\.yml@main/);
   assert.match(commands, /secrets: inherit/);
-  assert.match(commands, /actions: write/);
-  assert.match(commands, /issues: write/);
-  assert.match(commands, /pull-requests: write/);
+  // Commands act with the configured token from the inherited secrets, so GITHUB_TOKEN only reads contents.
+  assert.match(commands, /^permissions:\n {2}contents: read\n/m);
+  assert.doesNotMatch(commands, /: write/);
   assert.doesNotMatch(commands, /pull_request_target:/);
   assert.doesNotMatch(commands, /checks: write/);
   assert.equal(commands.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);
@@ -859,4 +862,65 @@ test("renderDistributionSummaryMarkdown shows the failed stage and repositories 
   assert.match(markdown, /Failed during workflow_file: write rejected/);
   assert.match(markdown, /Not Processed: Stopped after failure in example\/two\./);
   assert.match(markdown, /\[example\/empty\].* - empty/);
+});
+
+test("dispatch command delivery leaves out the command caller and removes it from repositories", () => {
+  const workflowPaths = generateCallerWorkflows({
+    sourceRepository: "fork-owner/Label-Sync",
+    sourceRef: "main",
+    commandDelivery: "dispatch",
+  }).map((workflow) => workflow.path);
+
+  assert.deepEqual(workflowPaths, [
+    ".github/workflows/label-test.yml",
+    ".github/workflows/label-test-review-refresh.yml",
+  ]);
+  assert.equal(commandCallerWorkflowPath, ".github/workflows/label-test-commands.yml");
+  assert.deepEqual(removedCallerWorkflowPaths({ commandDelivery: "dispatch" }), [
+    ...legacyCallerWorkflowPaths,
+    commandCallerWorkflowPath,
+  ]);
+  // Workflow delivery installs the caller and so never deletes it.
+  assert.deepEqual(removedCallerWorkflowPaths({ commandDelivery: "workflow" }), legacyCallerWorkflowPaths);
+  assert.deepEqual(removedCallerWorkflowPaths(), legacyCallerWorkflowPaths);
+  assert.ok(generateCallerWorkflows({ sourceRepository: "o/r", sourceRef: "main" })
+    .some((workflow) => workflow.path === commandCallerWorkflowPath));
+});
+
+test("writeCallerWorkflows deletes an installed command caller when commands are dispatched", async () => {
+  const { api, calls } = createFakeDistributionApi({
+    files: { main: { ...currentWorkflowFiles, [commandCallerWorkflowPath]: "old caller" } },
+  });
+
+  const result = await writeCallerWorkflows(
+    "token",
+    { full_name: "example/alpha" },
+    distributionOptions(api, { legacyPaths: removedCallerWorkflowPaths({ commandDelivery: "dispatch" }) }),
+  );
+
+  assert.equal(countCalls(calls, "createCommitOnBranch"), 1);
+  const commit = findCommit(calls);
+  assert.deepEqual(commit.options.additions, []);
+  assert.deepEqual(commit.options.deletions, [commandCallerWorkflowPath]);
+  assert.notEqual(result.status, "unchanged");
+});
+
+test("processDistributionRepositories forwards the paths to remove to its writer", async () => {
+  let receivedLegacyPaths;
+  const legacyPaths = removedCallerWorkflowPaths({ commandDelivery: "dispatch" });
+
+  await processDistributionRepositories([{ full_name: "example/ready" }], {
+    token: "token",
+    deliveryMode: "direct_commit",
+    workflows: workflowSet,
+    legacyPaths,
+    dryRun: false,
+    preflight: async () => ({ defaultBranch: "main", defaultRef: { object: { sha: "default-sha" } } }),
+    write: async (token, repository, options) => {
+      receivedLegacyPaths = options.legacyPaths;
+      return { repository: repository.full_name, status: "updated", branch: "main" };
+    },
+  });
+
+  assert.deepEqual(receivedLegacyPaths, legacyPaths);
 });

@@ -39,6 +39,7 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // "allowedUsers": "teams/maintainers, UltraProdigy",
     // "allowExternalRepositories": false
   },
+  "commandDelivery": "workflow",
   "workflowDistribution": {
     "filterMode": "whitelist",
     "whitelist": [],
@@ -76,7 +77,7 @@ Behavior:
 - Pull requests opened by an `ignoredPullRequestAuthors` login are skipped, like the other label rules.
 - Sticky labels are enforced on pull requests that call the Label Test workflow. Labels on issues are not affected.
 - Removals made with the configured Label Sync token always take precedence, so `Remove-Labels` can remove sticky labels. Only Label Sync admins can run those workflows, so the token's identity is treated as an allowed remover: the GitHub App's `<app-slug>[bot]` login, or the PAT owner's account in PAT mode. In PAT mode, this also means the PAT owner can remove sticky labels by hand.
-- Restoring labels and posting the optional notice use the configured PAT or GitHub App token, which needs pull request (or issue) write access to the target repository; the `Remove-Labels` token already has this. Pull request labels and comments go through GitHub's issues API, since every pull request is also an issue. Without a configured token, the reusable workflow's `GITHUB_TOKEN` with `pull-requests: write` is used instead; a label restored with `GITHUB_TOKEN` does not start another Label Test run.
+- Restoring labels and posting the optional notice use the configured PAT or GitHub App token, which needs pull request (or issue) write access to the target repository; the `Remove-Labels` token already has this. Pull request labels and comments go through GitHub's issues API, since every pull request is also an issue.
 
 ## Review requests
 
@@ -147,11 +148,47 @@ The pull request that merges is usually in another repository, so the waiting pu
 - **Label Test** completes the wait when it runs on the waiting pull request and every linked pull request is already closed, then evaluates the policy without the label.
 - **The command itself** completes the wait right away if the label is present and nothing is left open.
 
-### Caller workflow and tokens
+### How commands arrive
+
+`commandDelivery` picks one of two paths for every `/` command in the organization. Only one is active at a time: a command that arrives the other way is ignored, so a comment is never handled twice, even while you switch between them.
+
+| | `"workflow"` (default) | `"dispatch"` |
+| --- | --- | --- |
+| What notices the comment | A caller workflow in each repository | Something you run that watches the organization, such as a GitHub App's webhook handler |
+| Files in each repository | `.github/workflows/label-test-commands.yml` | None; `05` removes the caller where it exists |
+| Where the command runs | `Label Test Command`, called from the target repository | `Label Test Command Dispatch`, in this repository |
+| Token | Configured PAT or GitHub App token | Configured PAT or GitHub App token |
+
+Both paths run the same script, so commands behave the same way. Use `"workflow"` for an organization with nothing watching its webhooks, and `"dispatch"` where something already does. After changing it, run `05 - Distribute-Label-Workflow` so the caller is installed or removed.
+
+#### Caller workflow and tokens
 
 Commands arrive through a third caller workflow, `.github/workflows/label-test-commands.yml`, installed by `05 - Distribute-Label-Workflow`. It runs on `issue_comment` and only starts a runner for comments on pull requests that start with `/` and were not written by a bot. Every other comment in the repository still appears in the Actions tab as a skipped run. Commands are handled by the central `Label Test Command` reusable workflow, so new commands will not need the callers to be redistributed again. Like the review continuation, it runs from the target repository's default branch with the configured authentication and never checks out pull request code.
 
-Labels and comments use the configured PAT or GitHub App token. A label added or removed with it starts Label Test by itself, which updates the required check. With only the `GITHUB_TOKEN` fallback, the command reruns the latest Label Test run instead, which is why the caller grants `actions: write` to that job. Teams in `allowedUsers` need a token that can read team membership.
+Commands act only with the configured PAT or GitHub App token, read from the secrets the caller inherits. The run happens in the target repository, so the secrets named in `properties.authentication` must be organization secrets that every target repository can read; Label Test and its review refresh read them the same way. There is no `GITHUB_TOKEN` fallback: without the secrets, the run fails at the token step. What a command can do is set by that token's permissions; the caller grants the workflow's own `GITHUB_TOKEN` nothing beyond reading contents. A label added or removed with the configured token starts Label Test by itself, which updates the required check. Teams in `allowedUsers` need a token that can read team membership.
+
+#### Dispatch
+
+With `"commandDelivery": "dispatch"`, the sender posts one `repository_dispatch` of type `pull-request-comment` to this repository for each `issue_comment` webhook it receives:
+
+```http
+POST /repos/<org>/<label-sync-repo>/dispatches
+{
+  "event_type": "pull-request-comment",
+  "client_payload": {
+    "repository": "owner/name",
+    "number": 123,
+    "comment_id": 456,
+    "action": "created"
+  }
+}
+```
+
+- `repository` is the webhook's `repository.full_name`, `number` is `issue.number`, `comment_id` is `comment.id`, and `action` is the webhook's `action`: `created`, `edited` or `deleted`.
+- The sender may forward every comment event, but it saves runner time to forward only comments on pull requests (`issue.pull_request` is present) whose `comment.body` starts with `/` and whose `comment.user.type` is not `Bot`. That matches what the caller workflow lets through.
+- The sender's token needs Contents write access to this repository and nothing else, the same as for `pull-request-closed`. One service can send both.
+
+The payload only says where to look. `Label Test Command Dispatch` ignores repositories outside the organization, reads the comment again from the API, and ignores it if it is on a different pull request, was written by a bot, or does not start with `/`. A deleted comment cannot be read, so its pull request is reconciled without one: that can update the tracking comment or finish a wait whose linked pull requests are all closed, but it never adds the label or starts a wait. A wrong or forged dispatch can therefore only make Label Sync look at a pull request again. Like the caller path, it acts only with the configured PAT or GitHub App token.
 
 Repository-specific rules are resolved centrally from the calling workflow's existing `github.repository` context. Adding or changing these rules does not require changes to the caller workflows.
 
@@ -169,7 +206,7 @@ Run `05 - Distribute-Label-Workflow` manually to install or update the Label Tes
 
 - `.github/workflows/label-test.yml`: the required policy check on `pull_request_target` and its privileged `workflow_run` continuation
 - `.github/workflows/label-test-review-refresh.yml`: records review context without secrets for the privileged continuation
-- `.github/workflows/label-test-commands.yml`: hands pull request comments that start with `/` to the central `Label Test Command` workflow
+- `.github/workflows/label-test-commands.yml`: hands pull request comments that start with `/` to the central `Label Test Command` workflow. Only with `"commandDelivery": "workflow"`; with `"dispatch"` it is not written and is removed if present.
 
 The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` filename if a target received that earlier layout; the signal now lives at `.github/workflows/label-test-review-refresh.yml`. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 

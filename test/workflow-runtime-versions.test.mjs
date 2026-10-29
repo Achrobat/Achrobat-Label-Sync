@@ -96,7 +96,11 @@ test("the reusable label test routes policy and refresh events inside one job", 
   assert.match(workflow, /name: Check PR labels and approvals\s*\n\s*if:\s*\$\{\{ github\.event_name == 'pull_request_target' \}\}/);
   assert.match(workflow, /run:\s*node scripts\/check-pr-label-policy\.mjs/);
   assert.match(workflow, /issues:\s*read/);
-  assert.match(workflow, /pull-requests:\s*write/);
+  // Every API call uses the configured token; GITHUB_TOKEN only downloads the artifact and posts the
+  // ignored-author status, so it never writes to pull requests.
+  assert.match(workflow, /pull-requests:\s*read/);
+  assert.doesNotMatch(workflow, /pull-requests:\s*write/);
+  assert.match(workflow, /statuses:\s*write/);
   assert.match(workflow, /LABEL_EVENT_ACTION:\s*\$\{\{ github\.event\.action \}\}/);
   assert.match(workflow, /LABEL_EVENT_LABEL:\s*\$\{\{ github\.event\.label\.name \}\}/);
   assert.match(workflow, /LABEL_EVENT_SENDER:\s*\$\{\{ github\.event\.sender\.login \}\}/);

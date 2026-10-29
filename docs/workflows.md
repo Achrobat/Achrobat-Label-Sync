@@ -1,6 +1,6 @@
 # Workflows
 
-This repository includes thirteen operational GitHub Actions workflows:
+This repository includes fourteen operational GitHub Actions workflows:
 
 - `02 - Config-Label-Sync`
 - `Config-Reset`
@@ -9,6 +9,7 @@ This repository includes thirteen operational GitHub Actions workflows:
 - `Refresh Label Test After Review`
 - `Label Test`
 - `Label Test Command`
+- `Label Test Command Dispatch`
 - `Wait-For-Merge`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
@@ -16,7 +17,7 @@ This repository includes thirteen operational GitHub Actions workflows:
 - `04 - Remove-Labels`
 - `06 - Transfer-Labels`
 
-`Label Test`, `Refresh Label Test After Review`, `Label Test Command`, `Wait-For-Merge`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
+`Label Test`, `Refresh Label Test After Review`, `Label Test Command`, `Label Test Command Dispatch`, `Wait-For-Merge`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
 
 ## Recommended sync flow
 

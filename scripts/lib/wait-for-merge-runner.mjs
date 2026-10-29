@@ -69,9 +69,9 @@ export function createTeamMembershipChecker(request, organization) {
   };
 }
 
-// Recognizes the identity behind the configured Label Sync token ("<app-slug>[bot]" or the PAT owner). Comments
-// and label changes made with the GITHUB_TOKEN fallback appear as github-actions[bot], which also counts here,
-// because wait-for-merge comments may have been written by either.
+// Recognizes the identity behind the configured Label Sync token ("<app-slug>[bot]" or the PAT owner). Label
+// Sync never writes with GITHUB_TOKEN, so github-actions[bot] does not count: any workflow in the repository
+// can post as it.
 export function createWaitForMergeActorChecker(request) {
   let loginPromise = null;
 
@@ -95,10 +95,6 @@ export function createWaitForMergeActorChecker(request) {
   return async (login) => {
     if (typeof login !== "string" || !login) {
       return false;
-    }
-
-    if (normalizeName(login) === "github-actions[bot]") {
-      return true;
     }
 
     loginPromise ??= resolveLogin();

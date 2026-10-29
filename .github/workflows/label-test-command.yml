@@ -16,14 +16,10 @@ on:
 # and comment come from the caller's issue_comment context. The comment body is read again from the API by the
 # script and is never placed in a shell command. No pull request code is checked out.
 #
-# The configured PAT or GitHub App token is preferred: label changes made with it start Label Test by
-# themselves. With the GITHUB_TOKEN fallback, issues and pull-requests write cover the comment and the label,
-# and actions: write lets the script rerun Label Test so the required check sees the label change.
+# Commands act only with the configured PAT or GitHub App token, so what they can do is set by that token's
+# permissions. GITHUB_TOKEN is only used to check out this repository.
 permissions:
-  actions: write
   contents: read
-  issues: write
-  pull-requests: write
 
 jobs:
   label-test-command:
@@ -56,7 +52,6 @@ jobs:
         env:
           AUTH_MODE: pat
           PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/create-github-auth-token.mjs
 
       - name: Resolve GitHub App auth token
@@ -71,9 +66,9 @@ jobs:
 
       - name: Run pull request command
         env:
+          COMMAND_SOURCE: workflow
           TARGET_REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER: ${{ github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
           COMMENT_ACTION: ${{ github.event.action }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/run-label-test-command.mjs

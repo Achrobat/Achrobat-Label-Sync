@@ -105,8 +105,14 @@ async function main() {
   const mode = process.env.AUTH_MODE ?? process.env.LABEL_SYNC_AUTH_MODE ?? "pat";
 
   if (mode === "pat") {
-    const token = process.env.PAT_TOKEN ?? process.env.LABEL_SYNC_TOKEN ?? process.env.CONFIG_LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
-    assert(token, "PAT_TOKEN is required when properties.authentication.mode is \"pat\".");
+    // A secret that does not exist reaches the workflow as an empty string, so || is used to skip it. There is
+    // deliberately no GITHUB_TOKEN fallback: Label Sync either has its configured token or does not run.
+    const token = process.env.PAT_TOKEN || process.env.LABEL_SYNC_TOKEN || process.env.CONFIG_LABEL_SYNC_TOKEN;
+    assert(
+      token,
+      "The PAT secret is missing or empty. Create the secret named in properties.authentication.pat.tokenSecretName "
+        + "as an organization or repository secret that this workflow can read.",
+    );
     await outputToken(token);
     return;
   }

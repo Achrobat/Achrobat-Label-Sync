@@ -786,6 +786,19 @@ function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
   };
 }
 
+export const commandDeliveryModes = ["workflow", "dispatch"];
+
+// Chooses how "/" commands reach Label Sync: through the caller workflow distributed to every repository, or
+// through a "pull-request-comment" repository_dispatch sent to the Label Sync repository.
+function validateCommandDelivery(value) {
+  const commandDelivery = value ?? "workflow";
+  assert(
+    commandDeliveryModes.includes(commandDelivery),
+    `config/label-test-workflow-config.jsonc field "commandDelivery" must be "workflow" or "dispatch".`,
+  );
+  return commandDelivery;
+}
+
 export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   assert(
     labelTestWorkflowConfig && typeof labelTestWorkflowConfig === "object" && !Array.isArray(labelTestWorkflowConfig),
@@ -813,6 +826,7 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
     waitForMerge: validateWaitForMerge(labelTestWorkflowConfig.waitForMerge, { failingLabels, stickyLabels }),
+    commandDelivery: validateCommandDelivery(labelTestWorkflowConfig.commandDelivery),
     // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
     workflowDistribution: validateRepositorySelection(workflowDistribution, {
       configPath: "config/label-test-workflow-config.jsonc",

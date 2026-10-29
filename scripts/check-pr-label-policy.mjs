@@ -163,19 +163,6 @@ function createAutomationActorChecker(token) {
   };
 }
 
-// Review requests made with the GITHUB_TOKEN fallback appear in the timeline as github-actions[bot], so that
-// login also counts as Label Sync when deciding whether a request is ours to withdraw. It is not added to
-// the sticky label checker, where it would let any workflow in the target repository remove sticky labels.
-function createReviewRequesterChecker(isAutomationActor) {
-  return async (login) => {
-    if (!process.env.LABEL_SYNC_TOKEN && normalizeName(login) === "github-actions[bot]") {
-      return true;
-    }
-
-    return isAutomationActor(login);
-  };
-}
-
 // Posts the sticky label notice once per label per pull request. The notice is informational, so a
 // failure here is reported as a warning and does not change the Label Test result.
 async function announceStickyLabels({ token, targetRepository, pullRequestNumber, restorations }) {
@@ -369,7 +356,7 @@ async function applyReviewRequests({
       pullRequestAuthor: pullRequestIssue?.user?.login,
       isDraft: pullRequest?.draft === true,
       isTeamMember,
-      isAutomationActor: createReviewRequesterChecker(isAutomationActor),
+      isAutomationActor,
       hasWriteAccess: createWriteAccessChecker(token, targetRepository),
     });
   } catch (error) {
@@ -477,11 +464,11 @@ async function main() {
     return;
   }
 
-  const token = process.env.LABEL_SYNC_TOKEN ?? process.env.GITHUB_TOKEN;
+  const token = process.env.LABEL_SYNC_TOKEN;
   const targetRepository = process.env.TARGET_REPOSITORY;
   const pullRequestNumber = process.env.PULL_REQUEST_NUMBER;
 
-  assert(token, "LABEL_SYNC_TOKEN or GITHUB_TOKEN is required unless --validate-only is used.");
+  assert(token, "LABEL_SYNC_TOKEN is required unless --validate-only is used.");
   assert(targetRepository, "TARGET_REPOSITORY is required.");
   assert(pullRequestNumber && /^\d+$/.test(pullRequestNumber), "PULL_REQUEST_NUMBER must be a number.");
 
