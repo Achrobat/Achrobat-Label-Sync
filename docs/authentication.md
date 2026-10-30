@@ -108,11 +108,17 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
 
     - Custom properties: Read Only
 
+    The "/" commands in config/commands.jsonc need a little more, only for the commands you turn on:
+
+    - /team: the organization permission Members: Read and Write
+    - /cherry-pick: Workflows: Read and Write, if a cherry-picked change can touch .github/workflows
+    - /release: nothing extra (Contents: Read and Write creates releases)
+
 ### Step 5: Generate and copy the token
 
     Be aware that GitHub only lets you do this one time. You will need to generate a new token if you lose it.
 
-### Step 6: Store it as a repository secret
+### Step 6: Store it as a secret
 
     In the forked Label-Sync repo, go to:
 
@@ -120,7 +126,19 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
 
     Title the secret "LABEL_SYNC_TOKEN" unless you changed tokenSecretName in the properties config, then use that instead.
 
-    Paste the P.A.T. key and add secret. You are now finished.
+    Paste the P.A.T. key and add secret.
+
+    If you use Label Test, the workflows that 05 - Distribute-Label-Workflow installs
+    run inside each target repository and read this secret there. In that case, store it as an organization
+    secret instead:
+
+    Organization Settings → Secrets and Variables → Actions → New Organization Secret
+
+    Give it repository access to this repository and every repository Label Test is distributed to. On GitHub
+    Free, organization secrets are not available to private repositories, so Label Test only works in public
+    repositories there.
+
+    You are now finished.
 
 --- 
 
@@ -160,6 +178,15 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
     If any repository filter uses "filterMode": "customProperty", also grant this organization permission:
 
     - Custom properties: Read Only
+
+    The "/" commands in config/commands.jsonc need a little more, only for the commands you turn on:
+
+    - /team: the organization permission Members: Read and Write
+    - /cherry-pick: Workflows: Read and Write, if a cherry-picked change can touch .github/workflows
+    - /release: nothing extra (Contents: Read and Write creates releases)
+
+    Releases and branches created with the app token start other workflows, such as publishing workflows that
+    run on a new tag or release. That does not happen for anything created with GITHUB_TOKEN.
 
 ### Step 4: Create the app
 
@@ -211,7 +238,7 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
 
     The number at the end of that URL is the installation ID.
 
-### Step 8: Store the app details as repository secrets
+### Step 8: Store the app details as secrets
 
     In the forked Label-Sync repo, go to:
 
@@ -240,6 +267,16 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
     - appIdSecretName
     - privateKeySecretName
     - installationIdSecretName
+
+    If you use Label Test, the workflows that 05 - Distribute-Label-Workflow installs
+    run inside each target repository and read these secrets there. In that case, store all three as organization
+    secrets instead:
+
+    Organization Settings → Secrets and Variables → Actions → New Organization Secret
+
+    Give it repository access to this repository and every repository Label Test is distributed to. On GitHub
+    Free, organization secrets are not available to private repositories, so Label Test only works in public
+    repositories there.
 
 ### Step 9: Finish configuration
 

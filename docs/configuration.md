@@ -10,6 +10,7 @@ All project config lives in `config/` and uses JSONC, so comments are allowed.
 - `config/github-default-labels.jsonc`: exact GitHub default label specs that can be pruned
 - `config/repository-filter.jsonc`: whitelist, blacklist, or custom property rules for repository selection and automatic sync settings
 - `config/label-test-workflow-config.jsonc`: PR label-test rules and separate caller workflow distribution repository lists
+- `config/commands.jsonc`: the "/" commands (`/wait-for-merge`, `/cherry-pick`, `/release`, `/team`), one block each
 
 The configured source repository is always skipped by repository filtering. You do not need to add it to the whitelist or blacklist.
 
@@ -71,9 +72,10 @@ Validation checks include:
 - Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
 - Label Test user and `teams/<slug>` approver, sticky label remover, and review request reviewer syntax
+- `config/commands.jsonc` shape: known command blocks only, user and `teams/<slug>` syntax for every member list, branch patterns, and team slugs
 - that the `waitForMerge` label is also a failing label and not a sticky label
-- that `commandDelivery` is `workflow` or `dispatch`
+- that `waitForMerge` and `commandDelivery` are no longer in `config/label-test-workflow-config.jsonc` (they moved or were removed)
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 
-The Label Test rules in `config/label-test-workflow-config.jsonc` are described in [Label Test](label-test.md).
+The Label Test rules in `config/label-test-workflow-config.jsonc` and the commands in `config/commands.jsonc` are described in [Label Test](label-test.md).

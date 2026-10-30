@@ -8,8 +8,8 @@ This repository includes fourteen operational GitHub Actions workflows:
 - `03 - Inventory-Labels`
 - `Refresh Label Test After Review`
 - `Label Test`
-- `Label Test Command`
 - `Label Test Command Dispatch`
+- `Merge Commands`
 - `Wait-For-Merge`
 - `Validate-Configs`
 - `Reverse-Config-Label-Sync`
@@ -17,7 +17,7 @@ This repository includes fourteen operational GitHub Actions workflows:
 - `04 - Remove-Labels`
 - `06 - Transfer-Labels`
 
-`Label Test`, `Refresh Label Test After Review`, `Label Test Command`, `Label Test Command Dispatch`, `Wait-For-Merge`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
+`Label Test`, `Refresh Label Test After Review`, `Label Test Command Dispatch`, `Merge Commands`, `Wait-For-Merge`, and `05 - Distribute-Label-Workflow` are covered in [Label Test](label-test.md). `Validate-Configs` is covered in [Configuration](configuration.md).
 
 ## Recommended sync flow
 
@@ -129,6 +129,7 @@ Run `Config-Reset` manually when you want to restore selected config files to th
 
 Inputs:
 
+- `reset_commands`: reset `config/commands.jsonc` with every command turned off
 - `reset_deleted_labels`: reset `config/deleted-labels.jsonc` to an empty deleted-label list
 - `reset_github_default_labels`: reset `config/github-default-labels.jsonc` to the standard GitHub default label specs
 - `reset_labels`: reset `config/labels.jsonc` to an empty managed-label list
