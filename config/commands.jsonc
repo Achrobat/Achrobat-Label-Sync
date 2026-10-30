@@ -25,9 +25,9 @@
   // anything except "/", "**" matches anything). Conflicts or other problems fail the run and the person who ran
   // the command is mentioned so they can do it by hand.
   "cherryPick": {
-    // "label": "Backport",
-    // "branches": ["release/**"],
-    // "allowedUsers": "teams/maintainers"
+    "label": "Safe For Stable",
+    "branches": ["release/**"],
+    "allowedUsers": "teams/Devs"
   },
 
   // /release <tag>, in a comment or in the PR description: when the PR merges into the default branch, Label
@@ -35,7 +35,7 @@
   // the tag already exists, nothing is created and the person who asked is mentioned. In the description, the
   // person who last edited it must be allowed.
   "release": {
-    // "allowedUsers": "teams/maintainers"
+    "allowedUsers": "teams/Devs"
   },
 
   // /team add <team> and /team remove <team>, in a PR or issue comment. Each rule names the teams it covers
@@ -44,6 +44,7 @@
   "team": {
     "rules": [
       // { "teams": ["testers", "translators"], "allowedUsers": "teams/contributors", "adminUsers": "teams/maintainers" }
+      { "teams": "Scala", "allowedUsers": "teams/Devs", "adminUsers": "teams/Admin" }
     ]
   }
 }
