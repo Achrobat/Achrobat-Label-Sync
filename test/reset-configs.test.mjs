@@ -66,8 +66,6 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
       stickyLabels: [],
       stickyLabelComment: false,
       reviewRequests: [],
-      waitForMerge: {},
-      commandDelivery: "workflow",
       workflowDistribution: {
         filterMode: "whitelist",
         whitelist: [],
@@ -78,6 +76,37 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
         },
       },
     });
+  } finally {
+    await fs.rm(workspace, { force: true, recursive: true });
+  }
+});
+
+test("reset-configs can reset commands.jsonc to every command turned off", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-reset-"));
+  const configDir = path.join(workspace, "config");
+  const configPath = path.join(configDir, "commands.jsonc");
+
+  try {
+    await fs.mkdir(configDir);
+    await fs.writeFile(configPath, JSON.stringify({ release: { allowedUsers: "Alice" } }), "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [resetConfigsScript], {
+      cwd: workspace,
+      env: { ...process.env, RESET_COMMANDS: "true" },
+    });
+
+    assert.match(stdout, /Reset config\/commands\.jsonc/);
+    assert.deepEqual(await readJsonc(configPath), {
+      waitForMerge: {},
+      cherryPick: {},
+      release: {},
+      team: { rules: [] },
+    });
+    // The shipped file and the reset default are the same text.
+    assert.equal(
+      await fs.readFile(configPath, "utf8"),
+      await fs.readFile(path.join(workspaceRoot, "config", "commands.jsonc"), "utf8"),
+    );
   } finally {
     await fs.rm(workspace, { force: true, recursive: true });
   }

@@ -719,20 +719,52 @@ function validateStickyLabelComment(value) {
   return value;
 }
 
-// The wait-for-merge command puts "label" on a pull request until every linked pull request is merged or
-// closed. The label must also be a failing label, otherwise it would not block merging. It cannot be sticky:
-// removing the label is how a wait is cancelled. "allowedUsers" lists who may run the command.
-function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
-  const configKey = "waitForMerge";
+export const commandsConfigPath = "config/commands.jsonc";
 
+// Every command lists who may run it in the same format as the other member fields: one user or
+// "teams/<slug>" team, a comma-separated list, or an array of either.
+function validateMemberList(value, { configKey, role }) {
+  assert(
+    typeof value === "string" || Array.isArray(value),
+    `${configKey} ${role} must be a user, a "teams/<slug>" team, or a list of them.`,
+  );
+
+  const seen = new Set();
+  return splitLabelMemberList(value, { configKey, role }).map((item) => {
+    const member = validateLabelMember(item, { configKey, role });
+    const key = normalizeName(member.value);
+    assert(!seen.has(key), `${configKey} lists ${role} "${member.value}" more than once.`);
+    seen.add(key);
+    return member;
+  });
+}
+
+function validateCommandBlock(value, configKey) {
   if (value === undefined || value === null) {
     return null;
   }
 
   assert(
     typeof value === "object" && !Array.isArray(value),
-    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an object.`,
+    `${commandsConfigPath} field "${configKey}" must contain an object.`,
   );
+  return value;
+}
+
+function isUnset(value) {
+  return value === undefined || value === "";
+}
+
+// The wait-for-merge command puts "label" on a pull request until every linked pull request is merged or
+// closed. The label must also be a failing label, otherwise it would not block merging. It cannot be sticky:
+// removing the label is how a wait is cancelled. "allowedUsers" lists who may run the command.
+function validateWaitForMerge(rawValue, { failingLabels, stickyLabels }) {
+  const configKey = "waitForMerge";
+  const value = validateCommandBlock(rawValue, configKey);
+
+  if (!value) {
+    return null;
+  }
 
   const hasLabel = typeof value.label === "string" && value.label.trim() !== "";
 
@@ -752,27 +784,14 @@ function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
   const labelKey = normalizeName(label);
   assert(
     failingLabels.some((failingLabel) => normalizeName(failingLabel) === labelKey),
-    `${configKey} label "${label}" must also be listed in "failingLabels" so that it blocks merging.`,
+    `${configKey} label "${label}" must also be listed in "failingLabels" in config/label-test-workflow-config.jsonc so that it blocks merging.`,
   );
   assert(
     !stickyLabels.some((entry) => normalizeName(entry.label) === labelKey),
     `${configKey} label "${label}" cannot also be a sticky label, because removing it is how a wait is cancelled.`,
   );
 
-  assert(
-    typeof value.allowedUsers === "string" || Array.isArray(value.allowedUsers),
-    `${configKey} allowedUsers must be a user, a "teams/<slug>" team, or a list of them.`,
-  );
-
-  const seen = new Set();
-  const allowedUsers = splitLabelMemberList(value.allowedUsers, { configKey, role: "allowedUsers" }).map((item) => {
-    const member = validateLabelMember(item, { configKey, role: "allowedUsers" });
-    const key = normalizeName(member.value);
-    assert(!seen.has(key), `${configKey} lists allowedUsers "${member.value}" more than once.`);
-    seen.add(key);
-    return member;
-  });
-
+  const allowedUsers = validateMemberList(value.allowedUsers, { configKey, role: "allowedUsers" });
   const allowExternalRepositories = value.allowExternalRepositories ?? false;
   assert(
     typeof allowExternalRepositories === "boolean",
@@ -786,17 +805,151 @@ function validateWaitForMerge(value, { failingLabels, stickyLabels }) {
   };
 }
 
-export const commandDeliveryModes = ["workflow", "dispatch"];
-
-// Chooses how "/" commands reach Label Sync: through the caller workflow distributed to every repository, or
-// through a "pull-request-comment" repository_dispatch sent to the Label Sync repository.
-function validateCommandDelivery(value) {
-  const commandDelivery = value ?? "workflow";
+// Branch patterns use "*" for any characters except "/", and "**" for any characters including "/", so
+// "release/**" matches "release/1.7" and "release/2/hotfix".
+function validateBranchPattern(value, configKey) {
+  assert(typeof value === "string" && value.trim(), `${configKey} branches must be non-empty strings.`);
+  const pattern = value.trim();
   assert(
-    commandDeliveryModes.includes(commandDelivery),
-    `config/label-test-workflow-config.jsonc field "commandDelivery" must be "workflow" or "dispatch".`,
+    !/[\s~^:?[\\]/.test(pattern) && !pattern.startsWith("/") && !pattern.endsWith("/") && !pattern.includes(".."),
+    `${configKey} branch pattern "${pattern}" is not a valid branch name or pattern.`,
   );
-  return commandDelivery;
+  return pattern;
+}
+
+// The cherry-pick command opens a pull request into another branch once the pull request merges. It only
+// works on pull requests that carry "label" when they merge, and only into branches matching "branches".
+function validateCherryPick(rawValue) {
+  const configKey = "cherryPick";
+  const value = validateCommandBlock(rawValue, configKey);
+
+  if (!value || (isUnset(value.label) && value.branches === undefined && value.allowedUsers === undefined)) {
+    return null;
+  }
+
+  assert(
+    typeof value.label === "string" && value.label.trim(),
+    `${configKey} needs a non-empty "label": the command only works on pull requests with that label.`,
+  );
+  assert(
+    typeof value.branches === "string" || (Array.isArray(value.branches) && value.branches.length > 0),
+    `${configKey} needs "branches": a branch name or pattern such as "release/**", or a list of them.`,
+  );
+
+  const seen = new Set();
+  const branches = (Array.isArray(value.branches) ? value.branches : [value.branches]).map((item) => {
+    const pattern = validateBranchPattern(item, configKey);
+    assert(!seen.has(pattern), `${configKey} lists branch pattern "${pattern}" more than once.`);
+    seen.add(pattern);
+    return pattern;
+  });
+
+  return {
+    label: value.label.trim(),
+    branches,
+    allowedUsers: validateMemberList(value.allowedUsers, { configKey, role: "allowedUsers" }),
+  };
+}
+
+// The release command creates a release when the pull request merges. Leave "allowedUsers" out to turn it off.
+function validateRelease(rawValue) {
+  const configKey = "release";
+  const value = validateCommandBlock(rawValue, configKey);
+
+  if (!value || value.allowedUsers === undefined) {
+    return null;
+  }
+
+  return {
+    allowedUsers: validateMemberList(value.allowedUsers, { configKey, role: "allowedUsers" }),
+  };
+}
+
+function validateTeamSlug(value, configKey) {
+  assert(typeof value === "string" && value.trim(), `${configKey} teams must be non-empty team slugs.`);
+  const slug = value.trim().replace(/^teams\//, "");
+  assert(/^[A-Za-z0-9_.-]+$/.test(slug), `${configKey} team slug "${slug}" contains invalid characters.`);
+  return slug;
+}
+
+// The team command adds or removes people from teams. Each rule names the teams it covers. People in
+// "allowedUsers" may add or remove themselves; people in "adminUsers" may also add or remove anyone in the
+// organization. Leave "rules" empty to turn it off.
+function validateTeam(rawValue) {
+  const configKey = "team";
+  const value = validateCommandBlock(rawValue, configKey);
+  const rules = value?.rules ?? [];
+
+  assert(Array.isArray(rules), `${configKey} rules must be an array.`);
+
+  if (rules.length === 0) {
+    return null;
+  }
+
+  return {
+    rules: rules.map((rule, index) => {
+      const ruleKey = `${configKey} rules[${index}]`;
+      assert(rule && typeof rule === "object" && !Array.isArray(rule), `${ruleKey} must be an object.`);
+      assert(
+        typeof rule.teams === "string" || (Array.isArray(rule.teams) && rule.teams.length > 0),
+        `${ruleKey} needs "teams": the team slugs this rule covers.`,
+      );
+      assert(
+        rule.allowedUsers !== undefined || rule.adminUsers !== undefined,
+        `${ruleKey} needs "allowedUsers", "adminUsers", or both.`,
+      );
+
+      const seen = new Set();
+      const teams = (Array.isArray(rule.teams) ? rule.teams : rule.teams.split(","))
+        .filter((item) => typeof item !== "string" || item.trim())
+        .map((item) => {
+          const slug = validateTeamSlug(item, ruleKey);
+          assert(!seen.has(normalizeName(slug)), `${ruleKey} lists team "${slug}" more than once.`);
+          seen.add(normalizeName(slug));
+          return slug;
+        });
+      assert(teams.length > 0, `${ruleKey} needs "teams": the team slugs this rule covers.`);
+
+      return {
+        teams,
+        allowedUsers: rule.allowedUsers === undefined
+          ? []
+          : validateMemberList(rule.allowedUsers, { configKey: ruleKey, role: "allowedUsers" }),
+        adminUsers: rule.adminUsers === undefined
+          ? []
+          : validateMemberList(rule.adminUsers, { configKey: ruleKey, role: "adminUsers" }),
+      };
+    }),
+  };
+}
+
+export const commandConfigKeys = ["waitForMerge", "cherryPick", "release", "team"];
+
+// config/commands.jsonc holds one block per "/" command. The wait-for-merge label is checked against the
+// failing and sticky labels in config/label-test-workflow-config.jsonc, so that file is validated first and
+// passed in.
+export function validateCommandsConfig(commandsConfig, { labelTestWorkflowConfig }) {
+  assert(
+    commandsConfig && typeof commandsConfig === "object" && !Array.isArray(commandsConfig),
+    `${commandsConfigPath} must contain an object.`,
+  );
+
+  for (const key of Object.keys(commandsConfig)) {
+    assert(
+      commandConfigKeys.includes(key),
+      `${commandsConfigPath} has an unknown field "${key}". Known commands: ${commandConfigKeys.join(", ")}.`,
+    );
+  }
+
+  return {
+    waitForMerge: validateWaitForMerge(commandsConfig.waitForMerge, {
+      failingLabels: labelTestWorkflowConfig?.failingLabels ?? [],
+      stickyLabels: labelTestWorkflowConfig?.stickyLabels ?? [],
+    }),
+    cherryPick: validateCherryPick(commandsConfig.cherryPick),
+    release: validateRelease(commandsConfig.release),
+    team: validateTeam(commandsConfig.team),
+  };
 }
 
 export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
@@ -809,6 +962,18 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
   assert(
     workflowDistribution && typeof workflowDistribution === "object" && !Array.isArray(workflowDistribution),
     'config/label-test-workflow-config.jsonc field "workflowDistribution" must contain an object.',
+  );
+
+  // Command settings moved to config/commands.jsonc, and commands now only arrive by repository_dispatch.
+  // Failing here keeps a fork that still has the old keys from silently turning its commands off.
+  assert(
+    labelTestWorkflowConfig.waitForMerge === undefined,
+    'config/label-test-workflow-config.jsonc field "waitForMerge" moved to config/commands.jsonc. Move the block there.',
+  );
+  assert(
+    labelTestWorkflowConfig.commandDelivery === undefined,
+    'config/label-test-workflow-config.jsonc field "commandDelivery" was removed: commands only arrive by '
+      + 'repository_dispatch now. Delete the field.',
   );
 
   const failingLabels = validateLabelNameEntries(labelTestWorkflowConfig.failingLabels ?? [], "failingLabels");
@@ -825,8 +990,6 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     stickyLabels,
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
-    waitForMerge: validateWaitForMerge(labelTestWorkflowConfig.waitForMerge, { failingLabels, stickyLabels }),
-    commandDelivery: validateCommandDelivery(labelTestWorkflowConfig.commandDelivery),
     // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
     workflowDistribution: validateRepositorySelection(workflowDistribution, {
       configPath: "config/label-test-workflow-config.jsonc",

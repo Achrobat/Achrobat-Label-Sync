@@ -1,23 +1,24 @@
 name: Label Test Command Dispatch
 
-# Runs slash commands such as /wait-for-merge when config/label-test-workflow-config.jsonc sets
-# "commandDelivery": "dispatch". Instead of a caller workflow in every repository, something that watches the
-# organization (for example a GitHub App's webhook handler) sends one repository_dispatch to this repository
-# for each pull request comment that is created, edited or deleted:
+# Runs "/" commands such as /wait-for-merge and /team (see config/commands.jsonc). This is the only way commands
+# arrive: something that watches the organization (for example a GitHub App's webhook handler) sends one
+# repository_dispatch to this repository for each comment that is created, edited or deleted, with type
+# "pull-request-comment" for pull request comments and "issue-comment" for issue comments:
 #
 #   POST /repos/<this repository>/dispatches
 #   {"event_type": "pull-request-comment",
 #    "client_payload": {"repository": "owner/name", "number": 123, "comment_id": 456, "action": "created"}}
 #
 # The payload only says where to look. The script checks that the repository is in the organization and reads
-# the comment again from the API, ignoring comments that are on another pull request, written by a bot, or do
-# not start with "/". The values are passed through env, never into a shell command, and no pull request code
+# the comment again from the API, ignoring comments that are on another issue or pull request, written by a
+# bot, or do not start with "/". Both types are handled the same way, because the type is not trusted either. The values are passed through env, never into a shell command, and no pull request code
 # is checked out. Needs the configured PAT or GitHub App token, because it acts on other repositories.
 
 on:
   repository_dispatch:
     types:
       - pull-request-comment
+      - issue-comment
 
 permissions:
   contents: read
@@ -61,9 +62,8 @@ jobs:
           GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
         run: node scripts/create-github-auth-token.mjs
 
-      - name: Run pull request command
+      - name: Run command
         env:
-          COMMAND_SOURCE: dispatch
           TARGET_REPOSITORY: ${{ github.event.client_payload.repository }}
           PULL_REQUEST_NUMBER: ${{ github.event.client_payload.number }}
           COMMENT_ID: ${{ github.event.client_payload.comment_id }}
