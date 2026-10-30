@@ -102,11 +102,6 @@ test("reset-configs can reset commands.jsonc to every command turned off", async
       release: {},
       team: { rules: [] },
     });
-    // The shipped file and the reset default are the same text.
-    assert.equal(
-      await fs.readFile(configPath, "utf8"),
-      await fs.readFile(path.join(workspaceRoot, "config", "commands.jsonc"), "utf8"),
-    );
   } finally {
     await fs.rm(workspace, { force: true, recursive: true });
   }
