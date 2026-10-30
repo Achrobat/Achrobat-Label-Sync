@@ -1,0 +1,76 @@
+name: Merge Commands
+
+# Runs /cherry-pick and /release when a pull request closes. Something that watches the organization (for
+# example a GitHub App's webhook handler) sends a "pull-request-closed" repository_dispatch to this repository
+# for every pull request that closes, the same one that finishes /wait-for-merge waits:
+#
+#   POST /repos/<this repository>/dispatches
+#   {"event_type": "pull-request-closed", "client_payload": {"repository": "owner/name", "number": 123}}
+#
+# Run it by hand to retry a pull request. The payload only names the pull request: the repository must be in
+# the organization, and whether it merged and what was asked are read again from the API. Values are passed
+# through env, never into a shell command. Cherry-picks fetch the merged commits and the target branch with git
+# and push a new branch, but never run any of that code. Needs the configured PAT or GitHub App token.
+
+on:
+  repository_dispatch:
+    types:
+      - pull-request-closed
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Repository of the merged pull request (owner/name)"
+        required: true
+        type: string
+      number:
+        description: "Pull request number"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  merge-commands:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: merge-commands-${{ github.event.client_payload.repository || inputs.repository }}-${{ github.event.client_payload.number || inputs.number }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Load properties
+        id: properties
+        run: node scripts/export-properties.mjs
+
+      # No GITHUB_TOKEN fallback: this repository's token cannot act on the target repository.
+      - name: Resolve PAT auth token
+        id: pat_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'pat' }}
+        env:
+          AUTH_MODE: pat
+          PAT_TOKEN: ${{ secrets[steps.properties.outputs.pat_token_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Resolve GitHub App auth token
+        id: app_auth
+        if: ${{ steps.properties.outputs.auth_mode == 'githubApp' }}
+        env:
+          AUTH_MODE: githubApp
+          GITHUB_APP_ID: ${{ secrets[steps.properties.outputs.github_app_id_secret_name] }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets[steps.properties.outputs.github_app_private_key_secret_name] }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
+        run: node scripts/create-github-auth-token.mjs
+
+      - name: Run merge commands
+        env:
+          TARGET_REPOSITORY: ${{ github.event.client_payload.repository || inputs.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.client_payload.number || inputs.number }}
+        run: node scripts/run-merge-commands.mjs

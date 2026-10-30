@@ -5,6 +5,54 @@ const workspaceRoot = process.cwd();
 const configDir = path.join(workspaceRoot, "config");
 
 const configDefaults = {
+  "commands.jsonc": `// "/" commands people can run in comments. Commands only arrive by repository_dispatch: something that watches
+// the organization, such as a GitHub App's webhook handler, sends a "pull-request-comment" or "issue-comment"
+// dispatch for each comment and a "pull-request-closed" dispatch for each closed pull request. See
+// docs/label-test.md, "How commands arrive".
+// Who may run a command uses the same format as the other member fields: a user such as "UltraProdigy", a team
+// such as "teams/maintainers" from config/properties.jsonc "organization", a comma-separated list, or an array.
+// A command from someone not allowed gets a 👎 reaction. Leave a block empty to turn that command off.
+{
+  // /wait-for-merge <link>: someone in "allowedUsers" holds a PR until other PRs merge. The link is a PR URL,
+  // "owner/repo#123", or "#123". Label Test adds "label" until every linked PR is merged or closed, then removes
+  // it and comments to tell the PR author and whoever ran the command that the PR is ready to merge. Several
+  // commands stack. Removing the label by hand cancels the wait. "label" must also be listed in "failingLabels"
+  // in config/label-test-workflow-config.jsonc so it blocks merging, and it cannot be a sticky label.
+  // "allowExternalRepositories" (default false) also allows links to PRs outside the organization.
+  "waitForMerge": {
+    // "label": "Waiting on PR",
+    // "allowedUsers": "teams/maintainers, UltraProdigy",
+    // "allowExternalRepositories": false
+  },
+
+  // /cherry-pick <branch>: when the PR merges, Label Sync opens a PR that applies the merged commit to <branch>.
+  // It only happens if the PR has "label" when it merges, and <branch> must match one of "branches" ("*" matches
+  // anything except "/", "**" matches anything). Conflicts or other problems fail the run and the person who ran
+  // the command is mentioned so they can do it by hand.
+  "cherryPick": {
+    // "label": "Backport",
+    // "branches": ["release/**"],
+    // "allowedUsers": "teams/maintainers"
+  },
+
+  // /release <tag>, in a comment or in the PR description: when the PR merges into the default branch, Label
+  // Sync creates a release named <tag> on the merge commit, with generated release notes, marked as latest. If
+  // the tag already exists, nothing is created and the person who asked is mentioned. In the description, the
+  // person who last edited it must be allowed.
+  "release": {
+    // "allowedUsers": "teams/maintainers"
+  },
+
+  // /team add <team> and /team remove <team>, in a PR or issue comment. Each rule names the teams it covers
+  // (team slugs). People in "allowedUsers" may add or remove themselves. People in "adminUsers" may also add or
+  // remove someone else: /team add <team> @someone. Only organization members can be added.
+  "team": {
+    "rules": [
+      // { "teams": ["testers", "translators"], "allowedUsers": "teams/contributors", "adminUsers": "teams/maintainers" }
+    ]
+  }
+}
+`,
   "deleted-labels.jsonc": `// Labels removed from config/labels.jsonc by Config-Label-Sync are moved here.
 // Org-Label-Sync deletes matching label names from selected repositories.
 //
@@ -164,27 +212,6 @@ const configDefaults = {
     // { "label": "Needs Art Review", "reviewer": "teams/art", "when": "afterApproval", "approvedBy": "teams/developers, UltraProdigy" }
   ],
 
-  // Wait for merge: someone listed in "allowedUsers" comments "/wait-for-merge <link>" on a PR, where the link is
-  // a PR URL, "owner/repo#123", or "#123". Label Test adds "label" until every linked PR is merged or closed,
-  // then removes it and comments to tell the PR author and whoever ran the command that the PR is ready to
-  // merge. Several commands stack. Removing the label by hand cancels the wait. "label" must also be listed in
-  // "failingLabels" so it blocks merging, and it cannot be a sticky label. "allowExternalRepositories"
-  // (default false) also allows links to PRs outside the organization. Leave "label" out to turn it off.
-  "waitForMerge": {
-    // "label": "Waiting on PR",
-    // "allowedUsers": "teams/maintainers, UltraProdigy",
-    // "allowExternalRepositories": false
-  },
-
-  // How "/" commands in pull request comments reach Label Sync. Only one path is active: commands that arrive
-  // the other way are ignored.
-  // "workflow" (default): 05 - Distribute-Label-Workflow installs a small caller workflow in each repository
-  // that hands command comments to Label Sync.
-  // "dispatch": no caller is installed, and 05 removes it where it exists. Instead, something that watches the
-  // organization, such as a GitHub App webhook handler, sends a "pull-request-comment" repository_dispatch to
-  // this repository for each pull request comment. Needs the configured PAT or GitHub App token.
-  "commandDelivery": "workflow",
-
   // Chooses which repositories 05 - Distribute-Label-Workflow installs the Label Test workflows in. This is
   // separate from config/repository-filter.jsonc but uses the same format. The workflow's optional
   // "repositories" input overrides it for a single run.
@@ -272,6 +299,7 @@ const configDefaults = {
 };
 
 const resetInputs = [
+  ["RESET_COMMANDS", "commands.jsonc"],
   ["RESET_DELETED_LABELS", "deleted-labels.jsonc"],
   ["RESET_GITHUB_DEFAULT_LABELS", "github-default-labels.jsonc"],
   ["RESET_LABELS", "labels.jsonc"],

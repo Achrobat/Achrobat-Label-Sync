@@ -1,10 +1,8 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
-import {
-  validateLabelTestWorkflowConfig,
-  validateProperties,
-} from "./lib/config-validation.mjs";
+import { validateProperties } from "./lib/config-validation.mjs";
+import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
 import {
   buildStickyLabelComment,
   describeReviewer,
@@ -25,7 +23,6 @@ import {
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
-const labelTestWorkflowConfigPath = path.join(workspaceRoot, "config", "label-test-workflow-config.jsonc");
 const validateOnly = process.argv.includes("--validate-only");
 
 async function githubRequest(token, method, apiPath, body, { allowNotFound = false } = {}) {
@@ -457,10 +454,10 @@ async function main() {
     requireOrganization: true,
     requireLabelSyncTokenSecretName: false,
   });
-  const config = validateLabelTestWorkflowConfig(await readJsonc(labelTestWorkflowConfigPath));
+  const config = await loadLabelTestAndCommandsConfig(workspaceRoot);
 
   if (validateOnly) {
-    console.log("Label Test workflow configuration is valid.");
+    console.log("Label Test workflow and command configuration is valid.");
     return;
   }
 

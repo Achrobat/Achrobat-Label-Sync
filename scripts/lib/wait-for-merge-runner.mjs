@@ -1,4 +1,5 @@
 import { normalizeName } from "./config-utils.mjs";
+import { createMemberChecker } from "./command-utils.mjs";
 import { planWaitForMerge, planWaitForMergeCancellation } from "./wait-for-merge.mjs";
 
 // GitHub API helpers for the wait-for-merge command. Every helper takes a request(method, apiPath, body)
@@ -104,30 +105,7 @@ export function createWaitForMergeActorChecker(request) {
 }
 
 export function createRunnerChecker(config, isTeamMember) {
-  const members = config?.waitForMerge?.allowedUsers ?? [];
-  const cache = new Map();
-
-  return async (login) => {
-    const key = normalizeName(login);
-
-    if (!cache.has(key)) {
-      cache.set(key, (async () => {
-        for (const member of members) {
-          if (member.type === "user" && normalizeName(member.login) === key) {
-            return true;
-          }
-
-          if (member.type === "team" && await isTeamMember(member.slug, login)) {
-            return true;
-          }
-        }
-
-        return false;
-      })());
-    }
-
-    return cache.get(key);
-  };
+  return createMemberChecker(config?.waitForMerge?.allowedUsers ?? [], isTeamMember);
 }
 
 // Linked pull requests are always read live, never from an event payload. A pull request Label Sync cannot

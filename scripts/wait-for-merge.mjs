@@ -1,7 +1,8 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assert, readJsonc } from "./lib/config-utils.mjs";
-import { validateLabelTestWorkflowConfig, validateProperties } from "./lib/config-validation.mjs";
+import { validateProperties } from "./lib/config-validation.mjs";
+import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
 import { isWaitForMergeEnabled } from "./lib/wait-for-merge.mjs";
 import {
   createPullRequestStateReader,
@@ -19,7 +20,6 @@ import {
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
-const labelTestWorkflowConfigPath = path.join(workspaceRoot, "config", "label-test-workflow-config.jsonc");
 const MAX_SEARCH_PAGES = 10;
 
 function escapeWorkflowCommand(value) {
@@ -55,7 +55,7 @@ async function main() {
     requireOrganization: true,
     requireLabelSyncTokenSecretName: false,
   });
-  const config = validateLabelTestWorkflowConfig(await readJsonc(labelTestWorkflowConfigPath));
+  const config = await loadLabelTestAndCommandsConfig(workspaceRoot);
 
   if (!isWaitForMergeEnabled(config)) {
     console.log("waitForMerge is not configured; nothing to do.");

@@ -34,12 +34,6 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
     // { "label": "Requires Admin", "reviewer": "teams/admin" },
     // { "label": "Affects Balance", "reviewer": "teams/balance-team", "when": "afterApproval" }
   ],
-  "waitForMerge": {
-    // "label": "Waiting on PR",
-    // "allowedUsers": "teams/maintainers, UltraProdigy",
-    // "allowExternalRepositories": false
-  },
-  "commandDelivery": "workflow",
   "workflowDistribution": {
     "filterMode": "whitelist",
     "whitelist": [],
@@ -104,9 +98,35 @@ Behavior:
 - Requests use the configured PAT or GitHub App token. GitHub does not let the default `GITHUB_TOKEN` request team reviews, so team reviewers need the configured token, which needs pull request write access. The team must also have access to the repository, or GitHub rejects the request; the warning names the team. User reviewers must be able to access the repository.
 - Combine `afterApproval` with a matching `protectedLabelApprovals` entry (and optionally `stickyLabels`) to require the team's approval as well as request it.
 
-## Wait for merge
+## Commands
 
-`waitForMerge` lets a maintainer hold a pull request until other pull requests are merged. They comment:
+People can run "/" commands in comments. Each command has its own block in `config/commands.jsonc`; leave a block empty to turn that command off.
+
+```jsonc
+{
+  "waitForMerge": { "label": "Waiting on PR", "allowedUsers": "teams/maintainers, UltraProdigy" },
+  "cherryPick": { "label": "Backport", "branches": ["release/**"], "allowedUsers": "teams/maintainers" },
+  "release": { "allowedUsers": "teams/maintainers" },
+  "team": {
+    "rules": [
+      { "teams": ["testers", "translators"], "allowedUsers": "teams/contributors", "adminUsers": "teams/maintainers" }
+    ]
+  }
+}
+```
+
+These rules apply to every command:
+
+- Who may run a command uses the same format as the other member fields: users, `teams/<slug>` teams, a comma-separated list, or an array. Teams need a token that can read team membership.
+- A command must start the comment. One comment can hold several commands, one per line, including different commands.
+- A command from someone who is not allowed gets a 👎 reaction and nothing else. Comments written by bots are ignored.
+- Unknown commands, and commands that are turned off, are ignored without a reaction, so typos and other tools' commands are left alone.
+- Nothing is stored outside the pull request or issue. Every run works out the state again from comments, the description, labels and the live state on GitHub.
+- Commands act only with the configured PAT or GitHub App token. See [Authentication](authentication.md) for the extra permissions `/team` and `/cherry-pick` need.
+
+### Wait for merge
+
+`/wait-for-merge` lets a maintainer hold a pull request until other pull requests are merged. They comment:
 
 ```text
 /wait-for-merge https://github.com/your-org/other-repo/pull/42
@@ -115,7 +135,10 @@ Behavior:
 The link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request in the same repository. Label Sync adds the configured label, which keeps Label Test failing, and posts one tracking comment listing what the pull request is waiting on. When every linked pull request is merged or closed, the label is removed and Label Sync comments once, mentioning the pull request author and everyone who ran the command, to say the pull request is ready to merge.
 
 ```jsonc
+// config/label-test-workflow-config.jsonc
 "failingLabels": ["Waiting on PR"],
+
+// config/commands.jsonc
 "waitForMerge": {
   "label": "Waiting on PR",
   "allowedUsers": "teams/maintainers, UltraProdigy",
@@ -123,53 +146,101 @@ The link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request
 }
 ```
 
-- `label` must also be listed in `failingLabels`, otherwise it would not block merging, and it cannot be a sticky label. Leave `label` out (the default) to turn the command off. Add the label to `config/labels.jsonc` too, so it exists with the intended color in every repository; GitHub otherwise creates it with a default color the first time it is added.
-- `allowedUsers` lists who may run the command: users, `teams/<slug>` teams, a comma-separated list, or an array. A command from anyone else is ignored and gets a 👎 reaction. Commands written by bots are ignored.
+- `label` must also be listed in `failingLabels` in `config/label-test-workflow-config.jsonc`, otherwise it would not block merging, and it cannot be a sticky label. Leave `label` out (the default) to turn the command off. Add the label to `config/labels.jsonc` too, so it exists with the intended color in every repository; GitHub otherwise creates it with a default color the first time it is added.
+- `allowedUsers` lists who may run the command.
 - `allowExternalRepositories` (default `false`) allows links to pull requests outside the organization. Label Sync must be able to read them; public repositories always work.
-- The command must start the comment. One comment can hold several commands, one per line, and later commands add to the wait instead of replacing it. The label stays until every linked pull request is merged or closed.
+- Later commands add to the wait instead of replacing it. The label stays until every linked pull request is merged or closed.
 - Comments are kept to two. The tracking comment is created by the first command and then edited: when another command is added, when a linked pull request merges, and when one is closed without merging while others are still open. The second comment is the ready-to-merge notice. If a linked pull request was closed without merging, the notice says so, and the label is still removed.
 - Removing the label by hand cancels the wait. Commands posted before the removal no longer count, and the tracking comment is edited to say who cancelled it. Running the command again starts a new wait with a new tracking comment.
 - Links to the pull request itself, links that are not pull requests, and links outside the organization (unless allowed) are listed in the tracking comment as ignored. If none of the linked pull requests are open, the label is not added. A linked pull request that Label Sync cannot read keeps the wait going, so nothing is lifted by mistake.
 - Editing a command changes what the pull request waits on, and deleting the comment removes its links. If no valid links are left, the label is left in place for someone to remove. An edit that removes the leading `/` is not seen until the next check.
-- Nothing is stored outside the pull request. Every run works the state out again from the comments, the label history, and the live state of each linked pull request.
 
-### How the merge is noticed
+#### How the merge is noticed
 
 The pull request that merges is usually in another repository, so the waiting pull request gets no event of its own. Three things check waits:
 
-- **The central `Wait-For-Merge` workflow** in this repository finds every open pull request in the organization with the label and completes the waits that are done. It runs every three hours as a backstop, can be run by hand, and also runs on a `repository_dispatch` of type `pull-request-closed`. Send that dispatch whenever a pull request in the organization closes, and waits finish within moments:
-
-  ```http
-  POST /repos/<org>/<label-sync-repo>/dispatches
-  {"event_type": "pull-request-closed", "client_payload": {"repository": "owner/name", "number": 123}}
-  ```
-
-  Any service that sees the organization's `pull_request` `closed` webhook can send it. The sender's token needs Contents write access to this repository; nothing else. The payload is only logged; every pull request is read again from the API, so a wrong or forged dispatch cannot lift a label. Without a sender, the schedule alone still works, only more slowly. This workflow needs the configured PAT or GitHub App token, because it works across repositories. Scheduled workflows are off by default in forks until Actions is enabled for them.
+- **The central `Wait-For-Merge` workflow** in this repository finds every open pull request in the organization with the label and completes the waits that are done. It runs every three hours as a backstop, can be run by hand, and also runs on the `pull-request-closed` dispatch (see [How commands arrive](#how-commands-arrive)), so waits finish within moments. This workflow needs the configured PAT or GitHub App token, because it works across repositories. Scheduled workflows are off by default in forks until Actions is enabled for them.
 - **Label Test** completes the wait when it runs on the waiting pull request and every linked pull request is already closed, then evaluates the policy without the label.
 - **The command itself** completes the wait right away if the label is present and nothing is left open.
 
+### Cherry-pick
+
+`/cherry-pick <branch>` asks Label Sync to apply a pull request to another branch once it merges:
+
+```text
+/cherry-pick release/1.7
+```
+
+```jsonc
+"cherryPick": {
+  "label": "Backport",
+  "branches": ["release/**"],
+  "allowedUsers": "teams/maintainers"
+}
+```
+
+- `branches` lists the branches you can cherry-pick into, by name or pattern. `*` matches anything except `/`, and `**` matches anything, so `release/**` matches `release/1.7` and `release/2/hotfix`.
+- When the command is posted, it gets 👍 if it is valid: the branch matches `branches`, exists, and is not the branch the pull request already targets. Otherwise it gets 👎, and someone in `allowedUsers` also gets a reply saying what is wrong.
+- When the pull request merges, Label Sync checks that it still has `label`. Without it nothing is cherry-picked, and the people who asked are told. The label is only checked at merge time, so it can be added after the command.
+- Label Sync then opens one pull request per requested branch, from the branch `cherry-pick/<number>-to-<branch>`, titled `[<branch>] <original title>`. It carries the original labels except `label` and is assigned to the people who asked. A comment on the original pull request links to it.
+- The merged changes are picked with `git cherry-pick -x` on the runner: the squashed commit for a squash merge, the merge commit against its first parent for a merge commit, or every commit of the pull request for a rebase merge. The new pull request still needs its own review and merge.
+- If the changes conflict, are already on the branch, or anything else goes wrong, nothing is opened, the run fails, and the people who asked are mentioned so they can cherry-pick it by hand.
+- Several people can ask for the same branch; it is cherry-picked once and they are all mentioned. A command posted after the pull request merged runs straight away. Running `Merge Commands` again does not open a second pull request.
+
+### Release
+
+`/release <tag>` creates a release when the pull request merges. It works in a comment or anywhere in the pull request description, on its own line:
+
+```text
+/release v2.8.0
+```
+
+```jsonc
+"release": {
+  "allowedUsers": "teams/maintainers"
+}
+```
+
+- The release is created on the merge commit, named `<tag>`, with GitHub's generated release notes, not a draft or prerelease, and marked as the latest release. Because it is created with the configured token, workflows that run on new tags or releases start as usual.
+- Only pull requests into the default branch are released.
+- If the tag already exists, no release is created, the run fails, and the person who asked is mentioned. Tags are not compared or ordered, so any naming scheme works.
+- In the description, the person who last edited it (or its author, if nobody has) must be in `allowedUsers`. A description last edited by a bot is ignored.
+- If several releases are asked for, the latest request wins. Edit or delete it to change or cancel it before the merge.
+- A comment command gets 👍 when posted, or 👎 with a reply if the tag already exists or the pull request does not target the default branch. A command posted after the merge runs straight away.
+
+### Team
+
+`/team add <team>` and `/team remove <team>` change team membership in the organization. They work in pull request and issue comments.
+
+```text
+/team add testers
+/team remove Quest Testers
+/team add testers @someone
+```
+
+```jsonc
+"team": {
+  "rules": [
+    { "teams": ["testers", "translators"], "allowedUsers": "teams/contributors", "adminUsers": "teams/maintainers" }
+  ]
+}
+```
+
+- Each rule names the teams it covers by slug. `<team>` in the command can be the slug or the team's display name.
+- People in `allowedUsers` can add or remove themselves. People in `adminUsers` can also add or remove anyone in the organization by mentioning them. A rule needs at least one of the two.
+- Only organization members can be added, so the command never sends an organization invitation. Someone already on the team, including a team maintainer, is left as they are.
+- The comment gets 👍 when every line was carried out and 👎 when any line was not. Someone covered by a rule also gets a reply saying what was wrong. If GitHub refuses a change, the person is told and the run fails.
+- Edits and deletions of `/team` comments do nothing; post a new comment instead.
+
 ### How commands arrive
 
-`commandDelivery` picks one of two paths for every `/` command in the organization. Only one is active at a time: a command that arrives the other way is ignored, so a comment is never handled twice, even while you switch between them.
+Commands only arrive by `repository_dispatch`. Run something that watches the organization's webhooks, such as a GitHub App's webhook handler, and have it send these to this repository:
 
-| | `"workflow"` (default) | `"dispatch"` |
+| Webhook | Dispatch type | Handled by |
 | --- | --- | --- |
-| What notices the comment | A caller workflow in each repository | Something you run that watches the organization, such as a GitHub App's webhook handler |
-| Files in each repository | `.github/workflows/label-test-commands.yml` | None; `05` removes the caller where it exists |
-| Where the command runs | `Label Test Command`, called from the target repository | `Label Test Command Dispatch`, in this repository |
-| Token | Configured PAT or GitHub App token | Configured PAT or GitHub App token |
-
-Both paths run the same script, so commands behave the same way. Use `"workflow"` for an organization with nothing watching its webhooks, and `"dispatch"` where something already does. After changing it, run `05 - Distribute-Label-Workflow` so the caller is installed or removed.
-
-#### Caller workflow and tokens
-
-Commands arrive through a third caller workflow, `.github/workflows/label-test-commands.yml`, installed by `05 - Distribute-Label-Workflow`. It runs on `issue_comment` and only starts a runner for comments on pull requests that start with `/` and were not written by a bot. Every other comment in the repository still appears in the Actions tab as a skipped run. Commands are handled by the central `Label Test Command` reusable workflow, so new commands will not need the callers to be redistributed again. Like the review continuation, it runs from the target repository's default branch with the configured authentication and never checks out pull request code.
-
-Commands act only with the configured PAT or GitHub App token, read from the secrets the caller inherits. The run happens in the target repository, so the secrets named in `properties.authentication` must be organization secrets that every target repository can read; Label Test and its review refresh read them the same way. There is no `GITHUB_TOKEN` fallback: without the secrets, the run fails at the token step. What a command can do is set by that token's permissions; the caller grants the workflow's own `GITHUB_TOKEN` nothing beyond reading contents. A label added or removed with the configured token starts Label Test by itself, which updates the required check. Teams in `allowedUsers` need a token that can read team membership.
-
-#### Dispatch
-
-With `"commandDelivery": "dispatch"`, the sender posts one `repository_dispatch` of type `pull-request-comment` to this repository for each `issue_comment` webhook it receives:
+| `issue_comment` on a pull request | `pull-request-comment` | `Label Test Command Dispatch` |
+| `issue_comment` on an issue | `issue-comment` | `Label Test Command Dispatch` |
+| `pull_request` `closed` | `pull-request-closed` | `Merge Commands` and `Wait-For-Merge` |
 
 ```http
 POST /repos/<org>/<label-sync-repo>/dispatches
@@ -184,11 +255,23 @@ POST /repos/<org>/<label-sync-repo>/dispatches
 }
 ```
 
-- `repository` is the webhook's `repository.full_name`, `number` is `issue.number`, `comment_id` is `comment.id`, and `action` is the webhook's `action`: `created`, `edited` or `deleted`.
-- The sender may forward every comment event, but it saves runner time to forward only comments on pull requests (`issue.pull_request` is present) whose `comment.body` starts with `/` and whose `comment.user.type` is not `Bot`. That matches what the caller workflow lets through.
-- The sender's token needs Contents write access to this repository and nothing else, the same as for `pull-request-closed`. One service can send both.
+```http
+POST /repos/<org>/<label-sync-repo>/dispatches
+{"event_type": "pull-request-closed", "client_payload": {"repository": "owner/name", "number": 123}}
+```
 
-The payload only says where to look. `Label Test Command Dispatch` ignores repositories outside the organization, reads the comment again from the API, and ignores it if it is on a different pull request, was written by a bot, or does not start with `/`. A deleted comment cannot be read, so its pull request is reconciled without one: that can update the tracking comment or finish a wait whose linked pull requests are all closed, but it never adds the label or starts a wait. A wrong or forged dispatch can therefore only make Label Sync look at a pull request again. Like the caller path, it acts only with the configured PAT or GitHub App token.
+- For comments, `repository` is the webhook's `repository.full_name`, `number` is `issue.number`, `comment_id` is `comment.id`, and `action` is the webhook's `action`: `created`, `edited` or `deleted`. Both comment types are handled the same way.
+- The sender may forward every comment event, but it saves runner time to forward only comments whose `comment.body` starts with `/` and whose `comment.user.type` is not `Bot`. Issue comments are only needed for `/team`.
+- For closed pull requests, `repository` is `repository.full_name` and `number` is `pull_request.number`. Send it for every closed pull request, merged or not.
+- The sender's token needs Contents write access to this repository and nothing else. One service can send all three.
+
+The payload only says where to look. A repository outside the organization is ignored. A comment is read again from the API and ignored if it is on a different issue or pull request, was written by a bot, or does not start with `/`. A deleted comment cannot be read, so wait-for-merge reconciles its pull request without one: that can update the tracking comment or finish a wait, but it never adds the label or starts a wait. A closed pull request is read again too, and nothing happens unless it merged. A wrong or forged dispatch can therefore only make Label Sync look at something again.
+
+Run `Merge Commands` by hand, with the repository and pull request number, to retry `/cherry-pick` and `/release` for a merged pull request.
+
+Earlier versions could also deliver commands through a caller workflow in every repository (`"commandDelivery": "workflow"`). That is gone: `05 - Distribute-Label-Workflow` removes `.github/workflows/label-test-commands.yml` wherever it finds it, and `commandDelivery` must be deleted from `config/label-test-workflow-config.jsonc`.
+
+## How Label Test runs
 
 Repository-specific rules are resolved centrally from the calling workflow's existing `github.repository` context. Adding or changing these rules does not require changes to the caller workflows.
 
@@ -206,9 +289,8 @@ Run `05 - Distribute-Label-Workflow` manually to install or update the Label Tes
 
 - `.github/workflows/label-test.yml`: the required policy check on `pull_request_target` and its privileged `workflow_run` continuation
 - `.github/workflows/label-test-review-refresh.yml`: records review context without secrets for the privileged continuation
-- `.github/workflows/label-test-commands.yml`: hands pull request comments that start with `/` to the central `Label Test Command` workflow. Only with `"commandDelivery": "workflow"`; with `"dispatch"` it is not written and is removed if present.
 
-The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes the obsolete `.github/workflows/label-test-review-signal.yml` filename if a target received that earlier layout; the signal now lives at `.github/workflows/label-test-review-refresh.yml`. The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
+The refresh implementation remains in the central Label-Sync repository as the reusable `Refresh Label Test` workflow. Distribution also removes files from earlier layouts: `.github/workflows/label-test-review-signal.yml` (the signal now lives at `.github/workflows/label-test-review-refresh.yml`) and `.github/workflows/label-test-commands.yml` (commands now arrive by dispatch). The generated workflows call back to the repository and default branch that ran the distributor, so forks distribute callers that point to the fork.
 
 Inputs:
 

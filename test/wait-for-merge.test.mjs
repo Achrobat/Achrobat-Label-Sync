@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateLabelTestWorkflowConfig } from "../scripts/lib/config-validation.mjs";
+import { validateCommandsConfig, validateLabelTestWorkflowConfig } from "../scripts/lib/config-validation.mjs";
+
+// Validates a Label Test config and a commands config together, the way Label Sync loads them.
+function validateConfigs({ waitForMerge, ...labelTest } = {}) {
+  const labelTestWorkflowConfig = validateLabelTestWorkflowConfig(labelTest);
+  return {
+    ...labelTestWorkflowConfig,
+    ...validateCommandsConfig(waitForMerge === undefined ? {} : { waitForMerge }, { labelTestWorkflowConfig }),
+  };
+}
 import {
   parsePullRequestReference,
   parseWaitForMergeCommands,
@@ -12,7 +21,7 @@ import {
 import { reconcileWaitForMerge } from "../scripts/lib/wait-for-merge-runner.mjs";
 
 const LABEL = "Waiting on PR";
-const config = validateLabelTestWorkflowConfig({
+const config = validateConfigs({
   failingLabels: [LABEL],
   waitForMerge: { label: LABEL, allowedUsers: "teams/maintainers, Alice" },
 });
@@ -62,16 +71,16 @@ test("parsePullRequestReference accepts URLs, owner/repo#n and #n", () => {
 });
 
 test("waitForMerge config must be a failing label, not sticky, and list allowed users", () => {
-  assert.equal(validateLabelTestWorkflowConfig({}).waitForMerge, null);
-  assert.equal(validateLabelTestWorkflowConfig({ waitForMerge: {} }).waitForMerge, null);
+  assert.equal(validateConfigs({}).waitForMerge, null);
+  assert.equal(validateConfigs({ waitForMerge: {} }).waitForMerge, null);
   assert.equal(config.waitForMerge.allowExternalRepositories, false);
   assert.deepEqual(config.waitForMerge.allowedUsers.map((member) => member.value), ["teams/maintainers", "Alice"]);
   assert.throws(
-    () => validateLabelTestWorkflowConfig({ waitForMerge: { label: LABEL, allowedUsers: "Alice" } }),
+    () => validateConfigs({ waitForMerge: { label: LABEL, allowedUsers: "Alice" } }),
     /must also be listed in "failingLabels"/,
   );
   assert.throws(
-    () => validateLabelTestWorkflowConfig({
+    () => validateConfigs({
       failingLabels: [LABEL],
       stickyLabels: [{ label: LABEL, remover: "Alice" }],
       waitForMerge: { label: LABEL, allowedUsers: "Alice" },
@@ -79,19 +88,19 @@ test("waitForMerge config must be a failing label, not sticky, and list allowed 
     /cannot also be a sticky label/,
   );
   assert.throws(
-    () => validateLabelTestWorkflowConfig({ failingLabels: [LABEL], waitForMerge: { label: LABEL } }),
+    () => validateConfigs({ failingLabels: [LABEL], waitForMerge: { label: LABEL } }),
     /allowedUsers must be/,
   );
   assert.throws(
-    () => validateLabelTestWorkflowConfig({ waitForMerge: { allowedUsers: "Alice" } }),
+    () => validateConfigs({ waitForMerge: { allowedUsers: "Alice" } }),
     /needs a "label"/,
   );
   assert.throws(
-    () => validateLabelTestWorkflowConfig({ failingLabels: [LABEL], waitForMerge: { label: LABEL, allowedUsers: "Alice, alice" } }),
+    () => validateConfigs({ failingLabels: [LABEL], waitForMerge: { label: LABEL, allowedUsers: "Alice, alice" } }),
     /more than once/,
   );
   assert.throws(
-    () => validateLabelTestWorkflowConfig({ failingLabels: [LABEL], waitForMerge: { label: LABEL, allowedUsers: "Alice", allowExternalRepositories: "yes" } }),
+    () => validateConfigs({ failingLabels: [LABEL], waitForMerge: { label: LABEL, allowedUsers: "Alice", allowExternalRepositories: "yes" } }),
     /allowExternalRepositories must be true or false/,
   );
 });
