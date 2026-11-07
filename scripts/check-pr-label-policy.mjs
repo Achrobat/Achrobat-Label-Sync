@@ -16,7 +16,6 @@ import {
 } from "./lib/label-test-workflow.mjs";
 import { isWaitForMergeEnabled } from "./lib/wait-for-merge.mjs";
 import {
-  cancelWaitForMerge,
   createWaitForMergeActorChecker,
   reconcileWaitForMerge,
 } from "./lib/wait-for-merge-runner.mjs";
@@ -382,11 +381,13 @@ async function applyReviewRequests({
   }
 }
 
-// Wait-for-merge: when the label was just removed by someone other than Label Sync, the tracking comment is
-// marked cancelled. When the label is present, the wait is completed here if every linked pull request is
-// already merged or closed, so the policy below is evaluated without the label. The central Wait-For-Merge
-// workflow does the same across the organization; this run is just the cheapest moment to notice. Failures
-// are warnings: the label stays, so the check stays as strict as before.
+// Wait-for-merge: whenever the label is present, or was just added or removed, the pull request is
+// reconciled. That completes a wait whose linked pull requests are all merged or closed (so the policy below
+// is evaluated without the label), ends a wait with nothing left to wait on, takes back a label someone added
+// by hand, and marks the commands of a wait someone cancelled by removing the label. The central
+// Wait-For-Merge workflow does the same across the organization; this run is just the cheapest moment to
+// notice. Commands only work with GitHub App authentication, so with a PAT this is skipped. Failures are
+// warnings: the label stays, so the check stays as strict as before.
 async function applyWaitForMerge({
   token,
   config,
@@ -401,23 +402,23 @@ async function applyWaitForMerge({
     return labels;
   }
 
+  if (!process.env.LABEL_SYNC_TOKEN_LOGIN) {
+    console.log("::notice title=Wait for merge skipped::Wait for merge only works with GitHub App authentication.");
+    return labels;
+  }
+
   const request = (method, apiPath, body) => githubRequest(token, method, apiPath, body);
-  const isAutomationActor = createWaitForMergeActorChecker(request);
   const labelKey = normalizeName(config.waitForMerge.label);
+  const triggeringEvent = readTriggeringLabelEvent();
+  const labelPresent = labels.some((label) => normalizeName(label?.name ?? "") === labelKey);
+  const labelJustChanged = ["labeled", "unlabeled"].includes(triggeringEvent?.action)
+    && normalizeName(triggeringEvent?.label ?? "") === labelKey;
+
+  if (!labelPresent && !labelJustChanged) {
+    return labels;
+  }
 
   try {
-    if (!labels.some((label) => normalizeName(label?.name ?? "") === labelKey)) {
-      await cancelWaitForMerge({
-        request,
-        config,
-        repository: targetRepository,
-        pullRequestNumber,
-        triggeringEvent: readTriggeringLabelEvent(),
-        isAutomationActor,
-      });
-      return labels;
-    }
-
     const outcome = await reconcileWaitForMerge({
       request,
       config,
@@ -427,7 +428,7 @@ async function applyWaitForMerge({
       issue: { ...pullRequestIssue, labels },
       loadIssueEvents,
       isTeamMember,
-      isAutomationActor,
+      isAutomationActor: createWaitForMergeActorChecker(),
     });
     return outcome.labels;
   } catch (error) {

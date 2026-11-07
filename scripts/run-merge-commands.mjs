@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties } from "./lib/config-validation.mjs";
 import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
-import { resolveCommitIdentity } from "./lib/command-utils.mjs";
+import { requireGithubAppToken, resolveCommitIdentity } from "./lib/command-utils.mjs";
 import { createGitCherryPicker } from "./lib/git-cherry-pick.mjs";
 import { isCherryPickEnabled, isReleaseEnabled, runMergeCommands } from "./lib/merge-commands.mjs";
 import {
@@ -63,8 +63,7 @@ async function main() {
     return;
   }
 
-  const token = process.env.LABEL_SYNC_TOKEN;
-  assert(token, "LABEL_SYNC_TOKEN is required: merge commands use the configured PAT or GitHub App token.");
+  const token = requireGithubAppToken();
   const request = createStatusAwareGithubRequest(token);
 
   await runMergeCommands({
@@ -73,7 +72,7 @@ async function main() {
     repository: target.repository,
     number: target.number,
     isTeamMember: createTeamMembershipChecker(request, properties.organization),
-    isAutomationActor: createWaitForMergeActorChecker(request),
+    isAutomationActor: createWaitForMergeActorChecker(),
     cherryPick: createGitCherryPicker({ token, identity: await resolveCommitIdentity(request) }),
   });
 }

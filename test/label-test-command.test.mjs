@@ -43,6 +43,8 @@ function createGithub({ comments = [], isPullRequest = true } = {}) {
     ["GET", /^\/repos\/Org\/repo\/issues\/5\/comments$/, firstPage(state.comments)],
     ["GET", /^\/repos\/Org\/repo\/issues\/5\/events$/, firstPage([])],
     ["GET", /^\/repos\/Org\/lib\/pulls\/42$/, () => ({ state: "open" })],
+    // Read by the loop check: Org/lib#42 is not waiting on anything.
+    ["GET", /^\/repos\/Org\/lib\/issues\/42$/, () => ({ number: 42, state: "open", pull_request: {}, labels: [] })],
     ["POST", /^\/repos\/Org\/repo\/issues\/5\/comments$/, ({ body }) => {
       state.comments.push(comment(100 + state.comments.length, BOT, body.body, { type: "Bot" }));
       return {};
@@ -51,9 +53,22 @@ function createGithub({ comments = [], isPullRequest = true } = {}) {
       state.labels.push(...body.labels.map((name) => ({ name })));
       return state.labels;
     }],
+    ["GET", /^\/repos\/Org\/repo\/issues\/comments\/(\d+)\/reactions$/, ({ match, page }) => (page === 1
+      ? state.reactions
+        .filter((item) => item.startsWith(`${match[1]}:`))
+        .map((item, index) => ({ id: index + 1, content: item.split(":")[1], user: { login: BOT } }))
+      : [])],
     ["POST", /^\/repos\/Org\/repo\/issues\/comments\/(\d+)\/reactions$/, ({ match, body }) => {
-      state.reactions.push(`${match[1]}:${body.content}`);
+      // GitHub keeps one reaction of each kind per person.
+      if (!state.reactions.includes(`${match[1]}:${body.content}`)) {
+        state.reactions.push(`${match[1]}:${body.content}`);
+      }
       return {};
+    }],
+    ["PATCH", /^\/repos\/Org\/repo\/issues\/comments\/(\d+)$/, ({ match, body }) => {
+      const found = state.comments.find((item) => String(item.id) === match[1]);
+      found.body = body.body;
+      return found;
     }],
     ["GET", /^\/orgs\/Org\/teams\/testers\/memberships\/(\w+)$/, ({ match }) => {
       if (!state.teamMembers.has(match[1])) {
@@ -131,7 +146,19 @@ test("a dispatched /wait-for-merge runs as before", async () => {
   assert.equal(result.handled, true);
   assert.equal(result.results["wait-for-merge"].labelAdded, true);
   assert.deepEqual(github.state.labels.map((label) => label.name), [LABEL]);
-  assert.match(github.state.comments.at(-1).body, /Org\/lib#42: open \(requested by Alice\)/);
+  assert.match(github.state.comments[0].body, /^\/wait-for-merge ⏳ Org\/lib#42\n\n_Waiting\./);
+  assert.deepEqual(github.state.reactions, ["1:+1"]);
+});
+
+test("edits Label Sync made itself are skipped when the dispatch names the sender", async () => {
+  const github = createGithub({ comments: [comment(1, "Alice", "/wait-for-merge Org/lib#42")] });
+
+  assert.equal((await run(github, { commentAction: "edited", sender: BOT })).reason, "own-edit");
+  assert.deepEqual(github.writes, []);
+
+  // A person's edit, or a dispatch without a sender, is handled as usual.
+  assert.equal((await run(github, { commentAction: "edited", sender: "Alice" })).handled, true);
+  assert.equal((await run(github, { commentAction: "edited" })).handled, true);
 });
 
 test("nothing runs when no command is enabled", async () => {
@@ -245,7 +272,7 @@ test("command workflows take payload values only through env and have no GITHUB_
 
     // Payload and input values may only appear in env and the concurrency group, never inside a run script.
     for (const line of workflow.split("\n").filter((item) => /client_payload|inputs\./.test(item))) {
-      assert.match(line, /^\s+(group|TARGET_REPOSITORY|PULL_REQUEST_NUMBER|COMMENT_ID|COMMENT_ACTION):|^#/, line);
+      assert.match(line, /^\s+(group|TARGET_REPOSITORY|PULL_REQUEST_NUMBER|COMMENT_ID|COMMENT_ACTION|COMMENT_SENDER):|^#/, line);
     }
   }
 

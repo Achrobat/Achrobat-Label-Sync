@@ -122,17 +122,34 @@ These rules apply to every command:
 - A command from someone who is not allowed gets a 👎 reaction and nothing else. Comments written by bots are ignored.
 - Unknown commands, and commands that are turned off, are ignored without a reaction, so typos and other tools' commands are left alone.
 - Nothing is stored outside the pull request or issue. Every run works out the state again from comments, the description, labels and the live state on GitHub.
-- Commands act only with the configured PAT or GitHub App token. See [Authentication](authentication.md) for the extra permissions `/team` and `/cherry-pick` need.
+- Commands act only with the configured GitHub App token; they do not work with a PAT. See [Authentication](authentication.md) for the extra permissions `/team` and `/cherry-pick` need.
 
 ### Wait for merge
 
 `/wait-for-merge` lets a maintainer hold a pull request until other pull requests are merged. They comment:
 
 ```text
-/wait-for-merge https://github.com/your-org/other-repo/pull/42
+/wait-for-merge https://github.com/your-org/other-repo/pull/42, #17 the API change has to land first
 ```
 
-The link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request in the same repository. Label Sync adds the configured label, which keeps Label Test failing, and posts one tracking comment listing what the pull request is waiting on. When every linked pull request is merged or closed, the label is removed and Label Sync comments once, mentioning the pull request author and everyone who ran the command, to say the pull request is ready to merge.
+Each link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request in the same repository. One command can hold any number of links, separated by spaces, commas or both. Plain words after the links are ignored, so the command can explain itself; anything that looks like a broken link (`#17x`, an issue URL) is treated as an invalid link.
+
+A valid command gets a 👍, and Label Sync adds the configured label, which keeps Label Test failing. There is no separate tracking comment: Label Sync edits the command comment itself, putting a status icon in front of each link and one short note at the end:
+
+```text
+/wait-for-merge ⏳ https://github.com/your-org/other-repo/pull/42, ✅ #17 the API change has to land first
+
+_Waiting. Remove the **Waiting on PR** label to cancel._
+```
+
+| Icon | Meaning |
+| --- | --- |
+| ⏳ | open (or Label Sync can't read it right now) |
+| ✅ | merged |
+| ❌ | closed without merging |
+| ❓ | invalid link |
+
+The icons are kept up to date as the linked pull requests change. When every linked pull request is merged or closed, the label is removed and the note becomes _Done._ If the waiting pull request is approved by someone with write access, Label Sync also comments once, mentioning only the people who ran the command, to say it is ready to merge. If it isn't approved yet, nobody is notified.
 
 ```jsonc
 // config/label-test-workflow-config.jsonc
@@ -149,17 +166,23 @@ The link can be a pull request URL, `owner/repo#42`, or `#42` for a pull request
 - `label` must also be listed in `failingLabels` in `config/label-test-workflow-config.jsonc`, otherwise it would not block merging, and it cannot be a sticky label. Leave `label` out (the default) to turn the command off. Add the label to `config/labels.jsonc` too, so it exists with the intended color in every repository; GitHub otherwise creates it with a default color the first time it is added.
 - `allowedUsers` lists who may run the command.
 - `allowExternalRepositories` (default `false`) allows links to pull requests outside the organization. Label Sync must be able to read them; public repositories always work.
-- Later commands add to the wait instead of replacing it. The label stays until every linked pull request is merged or closed.
-- Comments are kept to two. The tracking comment is created by the first command and then edited: when another command is added, when a linked pull request merges, and when one is closed without merging while others are still open. The second comment is the ready-to-merge notice. If a linked pull request was closed without merging, the notice says so, and the label is still removed.
-- Removing the label by hand cancels the wait. Commands posted before the removal no longer count, and the tracking comment is edited to say who cancelled it. Running the command again starts a new wait with a new tracking comment.
-- Links to the pull request itself, links that are not pull requests, and links outside the organization (unless allowed) are listed in the tracking comment as ignored. If none of the linked pull requests are open, the label is not added. A linked pull request that Label Sync cannot read keeps the wait going, so nothing is lifted by mistake.
-- Editing a command changes what the pull request waits on, and deleting the comment removes its links. If no valid links are left, the label is left in place for someone to remove. An edit that removes the leading `/` is not seen until the next check.
+
+Rules:
+
+- **Rejected commands.** A command gets a 👎, adds no label and waits on nothing if any link is invalid or if every linked pull request is already merged or closed. Invalid links are: not a pull request link, a link to the pull request itself, a pull request that doesn't exist, one outside the organization (unless allowed), or one that would create a loop (below). The note says why. Fixing the comment by editing it starts the wait, and the reaction switches to 👍.
+- **Loops.** If pull request A waits on B, B may not wait on A. Chains are followed three pull requests deep (A waits on B, B on C, C on D, and D may not wait on A).
+- **Several commands** on one pull request add to the same wait. The ready-to-merge comment mentions everyone who ran one.
+- **Edits.** Editing a command during a wait changes what it waits on. Label Sync only rewrites its icons and its note line, never the links or other text. If an edit breaks a command, or it is deleted, its links stop counting; when no valid command is left, the wait ends, the label is removed and the note says _Cancelled_.
+- **Cancelling.** Removing the label by hand cancels the wait, and every command's note says who cancelled it. After a wait ends for any reason, editing its old commands does nothing; post a new command to start again.
+- **The label belongs to Label Sync.** If someone adds the label by hand, Label Test removes it again. Use a different failing label to block a pull request by hand.
+- **Can't read a pull request.** A linked pull request Label Sync can't read for some reason other than not existing (permissions, rate limits) keeps the wait going, so nothing is lifted by mistake.
+- Commands only work with GitHub App authentication, because Label Sync has to tell its own label changes and edits apart from people's.
 
 #### How the merge is noticed
 
 The pull request that merges is usually in another repository, so the waiting pull request gets no event of its own. Three things check waits:
 
-- **The central `Wait-For-Merge` workflow** in this repository finds every open pull request in the organization with the label and completes the waits that are done. It runs every three hours as a backstop, can be run by hand, and also runs on the `pull-request-closed` dispatch (see [How commands arrive](#how-commands-arrive)), so waits finish within moments. This workflow needs the configured PAT or GitHub App token, because it works across repositories. Scheduled workflows are off by default in forks until Actions is enabled for them.
+- **The central `Wait-For-Merge` workflow** in this repository finds every open pull request in the organization with the label and completes the waits that are done. It runs every three hours as a backstop, can be run by hand, and also runs on the `pull-request-closed` dispatch (see [How commands arrive](#how-commands-arrive)), so waits finish within moments. This workflow needs the configured GitHub App token, because it works across repositories. Scheduled workflows are off by default in forks until Actions is enabled for them.
 - **Label Test** completes the wait when it runs on the waiting pull request and every linked pull request is already closed, then evaluates the policy without the label.
 - **The command itself** completes the wait right away if the label is present and nothing is left open.
 
@@ -250,7 +273,8 @@ POST /repos/<org>/<label-sync-repo>/dispatches
     "repository": "owner/name",
     "number": 123,
     "comment_id": 456,
-    "action": "created"
+    "action": "created",
+    "sender": "UltraProdigy"
   }
 }
 ```
@@ -260,12 +284,12 @@ POST /repos/<org>/<label-sync-repo>/dispatches
 {"event_type": "pull-request-closed", "client_payload": {"repository": "owner/name", "number": 123}}
 ```
 
-- For comments, `repository` is the webhook's `repository.full_name`, `number` is `issue.number`, `comment_id` is `comment.id`, and `action` is the webhook's `action`: `created`, `edited` or `deleted`. Both comment types are handled the same way.
-- The sender may forward every comment event, but it saves runner time to forward only comments whose `comment.body` starts with `/` and whose `comment.user.type` is not `Bot`. Issue comments are only needed for `/team`.
+- For comments, `repository` is the webhook's `repository.full_name`, `number` is `issue.number`, `comment_id` is `comment.id`, `action` is the webhook's `action`: `created`, `edited` or `deleted`, and `sender` (optional) is `sender.login`. Both comment types are handled the same way.
+- The sender may forward every comment event, but it saves runner time to forward only comments whose `comment.body` starts with `/` and whose `comment.user.type` is not `Bot`. Issue comments are only needed for `/team`. `/wait-for-merge` edits command comments itself; drop `edited` events whose `sender.login` is the Label Sync app (`<app-slug>[bot]`), or include `sender` so Label Sync skips them without doing anything.
 - For closed pull requests, `repository` is `repository.full_name` and `number` is `pull_request.number`. Send it for every closed pull request, merged or not.
 - The sender's token needs Contents write access to this repository and nothing else. One service can send all three.
 
-The payload only says where to look. A repository outside the organization is ignored. A comment is read again from the API and ignored if it is on a different issue or pull request, was written by a bot, or does not start with `/`. A deleted comment cannot be read, so wait-for-merge reconciles its pull request without one: that can update the tracking comment or finish a wait, but it never adds the label or starts a wait. A closed pull request is read again too, and nothing happens unless it merged. A wrong or forged dispatch can therefore only make Label Sync look at something again.
+The payload only says where to look. A repository outside the organization is ignored. A comment is read again from the API and ignored if it is on a different issue or pull request, was written by a bot, or does not start with `/`. A deleted comment cannot be read, so wait-for-merge reconciles its pull request without one: that can update the other commands or end a wait, but it never adds the label or starts a wait. A closed pull request is read again too, and nothing happens unless it merged. A wrong or forged dispatch can therefore only make Label Sync look at something again.
 
 Run `Merge Commands` by hand, with the repository and pull request number, to retry `/cherry-pick` and `/release` for a merged pull request.
 

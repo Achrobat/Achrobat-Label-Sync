@@ -1,9 +1,10 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { assert, readJsonc } from "./lib/config-utils.mjs";
+import { readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties } from "./lib/config-validation.mjs";
 import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
 import { isWaitForMergeEnabled } from "./lib/wait-for-merge.mjs";
+import { requireGithubAppToken } from "./lib/command-utils.mjs";
 import {
   createPullRequestStateReader,
   createStatusAwareGithubRequest,
@@ -62,8 +63,7 @@ async function main() {
     return;
   }
 
-  const token = process.env.LABEL_SYNC_TOKEN;
-  assert(token, "Wait-For-Merge needs the configured PAT or GitHub App token, because it works across repositories.");
+  const token = requireGithubAppToken();
 
   if (process.env.DISPATCH_REPOSITORY || process.env.DISPATCH_PULL_REQUEST) {
     console.log(`Triggered by the close of ${process.env.DISPATCH_REPOSITORY || "?"}#${process.env.DISPATCH_PULL_REQUEST || "?"}.`);
@@ -71,7 +71,7 @@ async function main() {
 
   const request = createStatusAwareGithubRequest(token);
   const isTeamMember = createTeamMembershipChecker(request, properties.organization);
-  const isAutomationActor = createWaitForMergeActorChecker(request);
+  const isAutomationActor = createWaitForMergeActorChecker();
   const getPullRequestState = createPullRequestStateReader(request);
   const waiting = await findWaitingPullRequests(request, {
     organization: properties.organization,

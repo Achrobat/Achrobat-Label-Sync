@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
 import { validateProperties } from "./lib/config-validation.mjs";
 import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
-import { parseCommandLines, resolveCommitIdentity } from "./lib/command-utils.mjs";
+import { parseCommandLines, requireGithubAppToken, resolveCommitIdentity } from "./lib/command-utils.mjs";
 import { commandRegistry, enabledCommands, runMergeCommands } from "./lib/commands.mjs";
 import { createGitCherryPicker } from "./lib/git-cherry-pick.mjs";
 import {
@@ -16,8 +16,12 @@ import {
 // type "pull-request-comment" or "issue-comment", sent to the Label Sync repository by something that watches
 // the organization (for example a GitHub App's webhook handler). Nothing in the payload is trusted: the
 // repository must be in the organization, and the comment is read again from the API and must be on the named
-// issue or pull request, not written by a bot, and start with "/". Commands act with the configured PAT or
-// GitHub App token only, so label changes start Label Test by themselves.
+// issue or pull request, not written by a bot, and start with "/". Commands act with the configured GitHub App
+// token only (never a PAT or GITHUB_TOKEN), so label changes start Label Test by themselves.
+//
+// The payload may name who made the change ("sender"). Edits Label Sync made itself, such as the status icons
+// wait-for-merge writes into command comments, are skipped. Trusting the payload here is safe: a forged sender
+// can only make Label Sync skip a run that would have changed nothing.
 //
 // The commands themselves are listed in scripts/lib/commands.mjs. A new comment runs every enabled command it
 // contains. An edited or deleted comment only matters to commands whose state lives in their comments.
@@ -50,8 +54,9 @@ export async function handleLabelTestCommand({
   pullRequestNumber,
   commentId,
   commentAction,
+  sender = null,
   isTeamMember = createTeamMembershipChecker(request, organization),
-  isAutomationActor = createWaitForMergeActorChecker(request),
+  isAutomationActor = createWaitForMergeActorChecker(),
   getCherryPicker = async () => {
     throw new Error("Cherry-picking is not available here.");
   },
@@ -81,12 +86,16 @@ export async function handleLabelTestCommand({
     return skip("organization", `${repository} is not in the ${organization} organization.`);
   }
 
+  if (commentAction === "edited" && sender && await isAutomationActor(sender)) {
+    return skip("own-edit", "The comment was edited by Label Sync itself.");
+  }
+
   let comment = null;
   let targets;
 
   if (commentAction === "deleted") {
     // A deleted comment can no longer be read, so the commands that care are reconciled without it. That can
-    // update a tracking comment or finish a wait, but never start one.
+    // update the other commands or end a wait, but never start one.
     targets = enabled.filter((command) => command.handlesEditsAndDeletes);
   } else {
     try {
@@ -178,8 +187,7 @@ async function main() {
     requireLabelSyncTokenSecretName: false,
   });
   const config = await loadLabelTestAndCommandsConfig(workspaceRoot);
-  const token = process.env.LABEL_SYNC_TOKEN;
-  assert(token, "LABEL_SYNC_TOKEN is required: commands use the configured PAT or GitHub App token.");
+  const token = requireGithubAppToken();
 
   const request = createStatusAwareGithubRequest(token);
 
@@ -191,6 +199,7 @@ async function main() {
     pullRequestNumber: process.env.PULL_REQUEST_NUMBER,
     commentId: process.env.COMMENT_ID,
     commentAction: process.env.COMMENT_ACTION,
+    sender: process.env.COMMENT_SENDER || null,
     getCherryPicker: async () => createGitCherryPicker({ token, identity: await resolveCommitIdentity(request) }),
   });
 }

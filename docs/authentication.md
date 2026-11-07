@@ -108,11 +108,8 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
 
     - Custom properties: Read Only
 
-    The "/" commands in config/commands.jsonc need a little more, only for the commands you turn on:
-
-    - /team: the organization permission Members: Read and Write
-    - /cherry-pick: Workflows: Read and Write, if a cherry-picked change can touch .github/workflows
-    - /release: nothing extra (Contents: Read and Write creates releases)
+    The "/" commands in config/commands.jsonc do not work with a PAT. They need GitHub App authentication
+    (see the GitHub App section below), because Label Sync has to tell its own changes apart from people's.
 
 ### Step 5: Generate and copy the token
 

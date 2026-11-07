@@ -1,4 +1,4 @@
-import { normalizeName } from "./config-utils.mjs";
+import { assert, normalizeName } from "./config-utils.mjs";
 
 // Helpers shared by the "/" commands. Every helper that talks to GitHub takes a request(method, apiPath, body)
 // function that resolves with the parsed JSON (null for 204) and rejects with an Error carrying `status`.
@@ -98,6 +98,19 @@ export function mention(logins) {
   }
 
   return unique.map((login) => `@${login}`).join(" ");
+}
+
+// Commands only work with GitHub App authentication: Label Sync must be able to tell its own label changes and
+// edits apart from people's, which needs an identity nobody else acts as. The app's bot login is resolved by
+// create-github-auth-token.mjs.
+export function requireGithubAppToken() {
+  assert(process.env.LABEL_SYNC_TOKEN, "LABEL_SYNC_TOKEN is required: commands use the configured GitHub App token.");
+  assert(
+    process.env.LABEL_SYNC_TOKEN_LOGIN,
+    'Commands only work with GitHub App authentication ("authentication.mode": "githubApp" in config/properties.jsonc), '
+      + "and the app's bot login must be readable with the app's credentials.",
+  );
+  return process.env.LABEL_SYNC_TOKEN;
 }
 
 // The login behind the configured token: "<app-slug>[bot]" for a GitHub App (from LABEL_SYNC_TOKEN_LOGIN,

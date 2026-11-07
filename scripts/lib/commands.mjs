@@ -12,7 +12,7 @@ import {
 
 // The "/" commands Label Sync knows. Each entry says when the command is on, whether it only works on pull
 // requests, and whether edits and deletions of its comments matter (true for commands whose state is worked
-// out from their comments, like wait-for-merge's tracking comment). run() receives the context built by
+// out from their comments, like wait-for-merge's command comments). run() receives the context built by
 // handleLabelTestCommand: request, config, organization, repository, number, issue, comment (null for a
 // deleted comment), commands (this command's lines in the comment), commentAction, isTeamMember,
 // isAutomationActor, runMergeCommandsOnce and log.

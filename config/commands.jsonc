@@ -6,12 +6,15 @@
 // such as "teams/maintainers" from config/properties.jsonc "organization", a comma-separated list, or an array.
 // A command from someone not allowed gets a 👎 reaction. Leave a block empty to turn that command off.
 {
-  // /wait-for-merge <link>: someone in "allowedUsers" holds a PR until other PRs merge. The link is a PR URL,
-  // "owner/repo#123", or "#123". Label Test adds "label" until every linked PR is merged or closed, then removes
-  // it and comments to tell the PR author and whoever ran the command that the PR is ready to merge. Several
-  // commands stack. Removing the label by hand cancels the wait. "label" must also be listed in "failingLabels"
-  // in config/label-test-workflow-config.jsonc so it blocks merging, and it cannot be a sticky label.
-  // "allowExternalRepositories" (default false) also allows links to PRs outside the organization.
+  // /wait-for-merge <link> [link ...]: someone in "allowedUsers" holds a PR until other PRs merge. Links are PR
+  // URLs, "owner/repo#123" or "#123", separated by spaces or commas. A valid command gets 👍, and Label Sync adds
+  // "label" and keeps status icons next to each link in the command comment. Any bad link, every linked PR being
+  // already closed, or a wait that would loop gets 👎 and no label. When every linked PR is merged or closed the
+  // label is removed, and if the PR is approved by someone with write access, whoever ran the command is told
+  // it is ready to merge. Removing the label by hand cancels the wait; a label added by hand is removed again.
+  // "label" must also be listed in "failingLabels" in config/label-test-workflow-config.jsonc so it blocks
+  // merging, and it cannot be a sticky label. "allowExternalRepositories" (default false) also allows links to
+  // PRs outside the organization. Commands only work with GitHub App authentication.
   "waitForMerge": {
     // "label": "Waiting on PR",
     // "allowedUsers": "teams/maintainers, UltraProdigy",
