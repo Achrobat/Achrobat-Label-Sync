@@ -144,7 +144,7 @@ permissions:
 jobs:
   label-test:
     permissions:
-      actions: read
+      actions: write
       contents: read
       checks: write
       issues: write

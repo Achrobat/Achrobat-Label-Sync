@@ -24,6 +24,50 @@ function validateSecretName(value, path) {
   return value.trim();
 }
 
+function emptyAppAuthentication() {
+  return {
+    appId: "",
+    appIdSecretName: "",
+    privateKeySecretName: "",
+    installationIdSecretName: "",
+  };
+}
+
+function validateAppId(value, path) {
+  const text = typeof value === "number" ? String(value) : value;
+  assert(typeof text === "string" && /^[1-9]\d*$/.test(text.trim()), `${path} must be a GitHub App ID (a positive number).`);
+  return text.trim();
+}
+
+// A GitHub App needs its ID and private key. The ID is public (it is in the App's own URL), so it can sit in
+// config as appId; appIdSecretName is still read for older copies. The installation is looked up from the
+// organization when installationIdSecretName is not set, so the private key is the only secret a copy needs.
+function validateAppAuthentication(app, path, { required }) {
+  assert(app && typeof app === "object" && !Array.isArray(app), `${path} must be an object when provided.`);
+
+  const validated = emptyAppAuthentication();
+
+  if (app.appId !== undefined && app.appId !== null && app.appId !== "") {
+    validated.appId = validateAppId(app.appId, `${path}.appId`);
+  }
+  if (app.appIdSecretName !== undefined) {
+    validated.appIdSecretName = validateSecretName(app.appIdSecretName, `${path}.appIdSecretName`);
+  }
+  if (app.privateKeySecretName !== undefined) {
+    validated.privateKeySecretName = validateSecretName(app.privateKeySecretName, `${path}.privateKeySecretName`);
+  }
+  if (app.installationIdSecretName !== undefined) {
+    validated.installationIdSecretName = validateSecretName(app.installationIdSecretName, `${path}.installationIdSecretName`);
+  }
+
+  if (required) {
+    assert(validated.appId || validated.appIdSecretName, `${path}.appId is required.`);
+    assert(validated.privateKeySecretName, `${path}.privateKeySecretName must look like a GitHub secret name.`);
+  }
+
+  return validated;
+}
+
 function validateAuthentication(properties, { requireAuth, legacyTokenSecretRequired }) {
   const legacyPatSecretName = properties.labelSyncTokenSecretName;
 
@@ -34,11 +78,7 @@ function validateAuthentication(properties, { requireAuth, legacyTokenSecretRequ
         pat: {
           tokenSecretName: validateSecretName(legacyPatSecretName, "properties.labelSyncTokenSecretName"),
         },
-        githubApp: {
-          appIdSecretName: "",
-          privateKeySecretName: "",
-          installationIdSecretName: "",
-        },
+        githubApp: emptyAppAuthentication(),
       };
     }
 
@@ -59,22 +99,14 @@ function validateAuthentication(properties, { requireAuth, legacyTokenSecretRequ
   const pat = authentication.pat ?? {};
   assert(pat && typeof pat === "object" && !Array.isArray(pat), "properties.authentication.pat must be an object when provided.");
 
-  const githubApp = authentication.githubApp ?? {};
-  assert(
-    githubApp && typeof githubApp === "object" && !Array.isArray(githubApp),
-    "properties.authentication.githubApp must be an object when provided.",
-  );
-
   const validated = {
     mode: authentication.mode,
     pat: {
       tokenSecretName: "",
     },
-    githubApp: {
-      appIdSecretName: "",
-      privateKeySecretName: "",
-      installationIdSecretName: "",
-    },
+    githubApp: validateAppAuthentication(authentication.githubApp ?? {}, "properties.authentication.githubApp", {
+      required: authentication.mode === "githubApp",
+    }),
   };
 
   if (authentication.mode === "pat") {
@@ -87,40 +119,6 @@ function validateAuthentication(properties, { requireAuth, legacyTokenSecretRequ
       pat.tokenSecretName ?? legacyPatSecretName,
       "properties.authentication.pat.tokenSecretName",
     );
-  }
-
-  if (authentication.mode === "githubApp") {
-    validated.githubApp.appIdSecretName = validateSecretName(
-      githubApp.appIdSecretName,
-      "properties.authentication.githubApp.appIdSecretName",
-    );
-    validated.githubApp.privateKeySecretName = validateSecretName(
-      githubApp.privateKeySecretName,
-      "properties.authentication.githubApp.privateKeySecretName",
-    );
-    validated.githubApp.installationIdSecretName = validateSecretName(
-      githubApp.installationIdSecretName,
-      "properties.authentication.githubApp.installationIdSecretName",
-    );
-  } else {
-    if (githubApp.appIdSecretName !== undefined) {
-      validated.githubApp.appIdSecretName = validateSecretName(
-        githubApp.appIdSecretName,
-        "properties.authentication.githubApp.appIdSecretName",
-      );
-    }
-    if (githubApp.privateKeySecretName !== undefined) {
-      validated.githubApp.privateKeySecretName = validateSecretName(
-        githubApp.privateKeySecretName,
-        "properties.authentication.githubApp.privateKeySecretName",
-      );
-    }
-    if (githubApp.installationIdSecretName !== undefined) {
-      validated.githubApp.installationIdSecretName = validateSecretName(
-        githubApp.installationIdSecretName,
-        "properties.authentication.githubApp.installationIdSecretName",
-      );
-    }
   }
 
   return validated;

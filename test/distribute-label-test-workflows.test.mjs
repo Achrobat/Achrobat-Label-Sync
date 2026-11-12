@@ -694,8 +694,8 @@ test("generateCallerWorkflows emits one dispatcher job and one unprivileged revi
   assert.doesNotMatch(policy, /^\s{4}if:/m);
   assert.doesNotMatch(policy, /^ {2}refresh-label-test:/m);
   assert.doesNotMatch(policy, /uses: fork-owner\/Label-Sync\/\.github\/workflows\/refresh-label-test\.yml@main/);
-  assert.match(policy, /actions:\s*read/);
-  assert.doesNotMatch(policy, /actions:\s*write/);
+  // The reusable workflow reruns the policy run with GITHUB_TOKEN after a review.
+  assert.match(policy, /actions:\s*write/);
   assert.match(policy, /review_signal_run_id:\s*\$\{\{ github\.event\.workflow_run\.id \|\| 0 \}\}/);
   assert.match(policy, /review_signal_head_sha:\s*\$\{\{ github\.event\.workflow_run\.head_sha \|\| '' \}\}/);
   assert.equal(policy.match(/^ {2}[a-z0-9-]+:$/gm).length, 1);

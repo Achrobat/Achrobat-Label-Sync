@@ -79,6 +79,7 @@ jobs:
       - name: Rerun authoritative Label Test
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RERUN_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
           REVIEW_SIGNAL_HEAD_SHA: ${{ inputs.review_signal_head_sha }}
