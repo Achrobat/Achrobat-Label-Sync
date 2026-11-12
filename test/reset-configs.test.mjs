@@ -81,32 +81,6 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
   }
 });
 
-test("reset-configs can reset commands.jsonc to every command turned off", async () => {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-reset-"));
-  const configDir = path.join(workspace, "config");
-  const configPath = path.join(configDir, "commands.jsonc");
-
-  try {
-    await fs.mkdir(configDir);
-    await fs.writeFile(configPath, JSON.stringify({ release: { allowedUsers: "Alice" } }), "utf8");
-
-    const { stdout } = await execFileAsync(process.execPath, [resetConfigsScript], {
-      cwd: workspace,
-      env: { ...process.env, RESET_COMMANDS: "true" },
-    });
-
-    assert.match(stdout, /Reset config\/commands\.jsonc/);
-    assert.deepEqual(await readJsonc(configPath), {
-      waitForMerge: {},
-      cherryPick: {},
-      release: {},
-      team: { rules: [] },
-    });
-  } finally {
-    await fs.rm(workspace, { force: true, recursive: true });
-  }
-});
-
 test("reset-configs restores automatic sync defaults in repository-filter.jsonc", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "label-sync-reset-"));
   const configDir = path.join(workspace, "config");

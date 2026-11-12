@@ -27,10 +27,12 @@ on:
 # artifact is untrusted input and is validated against the workflow run's recorded head
 # SHA before the configured PAT or GitHub App token reruns the authoritative policy run.
 
-# Every API call uses the configured PAT or GitHub App token. GITHUB_TOKEN is only used to download the
-# review artifact (actions: read) and to post the ignored-author status (statuses: write).
+# Label and comment calls use the configured PAT or GitHub App token, which is what can read team
+# membership. GITHUB_TOKEN downloads the review artifact, posts the ignored-author status, and reruns the
+# policy run after a review (actions: write), so the configured App never needs Actions access. Callers
+# generated before actions: write was added fail to start until 05 - Distribute-Label-Workflow runs again.
 permissions:
-  actions: read
+  actions: write
   contents: read
   issues: read
   pull-requests: read
@@ -99,6 +101,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_run' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RERUN_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER_FILE: ${{ runner.temp }}/label-test-review-context/pr-number.txt
           REVIEW_SIGNAL_HEAD_SHA: ${{ inputs.review_signal_head_sha }}

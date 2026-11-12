@@ -1,8 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assert, normalizeName, readJsonc } from "./lib/config-utils.mjs";
-import { validateProperties } from "./lib/config-validation.mjs";
-import { loadLabelTestAndCommandsConfig } from "./lib/load-command-config.mjs";
+import { validateLabelTestWorkflowConfig, validateProperties } from "./lib/config-validation.mjs";
 import {
   buildStickyLabelComment,
   describeReviewer,
@@ -14,12 +13,6 @@ import {
   isIgnoredPullRequestAuthor,
   planReviewRequests,
 } from "./lib/label-test-workflow.mjs";
-import { isWaitForMergeEnabled } from "./lib/wait-for-merge.mjs";
-import {
-  cancelWaitForMerge,
-  createWaitForMergeActorChecker,
-  reconcileWaitForMerge,
-} from "./lib/wait-for-merge-runner.mjs";
 
 const workspaceRoot = process.cwd();
 const propertiesPath = path.join(workspaceRoot, "config", "properties.jsonc");
@@ -382,60 +375,6 @@ async function applyReviewRequests({
   }
 }
 
-// Wait-for-merge: when the label was just removed by someone other than Label Sync, the tracking comment is
-// marked cancelled. When the label is present, the wait is completed here if every linked pull request is
-// already merged or closed, so the policy below is evaluated without the label. The central Wait-For-Merge
-// workflow does the same across the organization; this run is just the cheapest moment to notice. Failures
-// are warnings: the label stays, so the check stays as strict as before.
-async function applyWaitForMerge({
-  token,
-  config,
-  targetRepository,
-  pullRequestNumber,
-  pullRequestIssue,
-  labels,
-  isTeamMember,
-  loadIssueEvents,
-}) {
-  if (!isWaitForMergeEnabled(config)) {
-    return labels;
-  }
-
-  const request = (method, apiPath, body) => githubRequest(token, method, apiPath, body);
-  const isAutomationActor = createWaitForMergeActorChecker(request);
-  const labelKey = normalizeName(config.waitForMerge.label);
-
-  try {
-    if (!labels.some((label) => normalizeName(label?.name ?? "") === labelKey)) {
-      await cancelWaitForMerge({
-        request,
-        config,
-        repository: targetRepository,
-        pullRequestNumber,
-        triggeringEvent: readTriggeringLabelEvent(),
-        isAutomationActor,
-      });
-      return labels;
-    }
-
-    const outcome = await reconcileWaitForMerge({
-      request,
-      config,
-      repository: targetRepository,
-      pullRequestNumber,
-      mode: "check",
-      issue: { ...pullRequestIssue, labels },
-      loadIssueEvents,
-      isTeamMember,
-      isAutomationActor,
-    });
-    return outcome.labels;
-  } catch (error) {
-    console.log(`::warning title=Wait for merge skipped::${escapeWorkflowCommand(error.message)}`);
-    return labels;
-  }
-}
-
 function printEvaluation(result) {
   if (result.passed) {
     console.log("Label Test passed.");
@@ -454,10 +393,12 @@ async function main() {
     requireOrganization: true,
     requireLabelSyncTokenSecretName: false,
   });
-  const config = await loadLabelTestAndCommandsConfig(workspaceRoot);
+  const config = validateLabelTestWorkflowConfig(
+    await readJsonc(path.join(workspaceRoot, "config", "label-test-workflow-config.jsonc")),
+  );
 
   if (validateOnly) {
-    console.log("Label Test workflow and command configuration is valid.");
+    console.log("Label Test workflow configuration is valid.");
     return;
   }
 
@@ -473,7 +414,7 @@ async function main() {
   const isTeamMember = createTeamMembershipChecker(token, properties.organization);
   const isAutomationActor = createAutomationActorChecker(token);
   const loadIssueEvents = createIssueEventsLoader(token, targetRepository, pullRequestNumber);
-  const labelsAfterSticky = await restoreStickyLabels({
+  const labels = await restoreStickyLabels({
     token,
     config,
     targetRepository,
@@ -482,16 +423,6 @@ async function main() {
     labels: Array.isArray(pullRequestIssue.labels) ? pullRequestIssue.labels : [],
     isTeamMember,
     isAutomationActor,
-    loadIssueEvents,
-  });
-  const labels = await applyWaitForMerge({
-    token,
-    config,
-    targetRepository,
-    pullRequestNumber,
-    pullRequestIssue,
-    labels: labelsAfterSticky,
-    isTeamMember,
     loadIssueEvents,
   });
   const reviews = await getPullRequestReviews(token, targetRepository, pullRequestNumber);

@@ -350,8 +350,10 @@ async function readPullRequestNumber() {
 }
 
 async function main() {
-  const token = process.env.LABEL_SYNC_TOKEN;
-  // The ignored-author status is the one thing posted with the workflow's own GITHUB_TOKEN.
+  // Label Test passes the workflow's own GITHUB_TOKEN as RERUN_TOKEN, so listing and rerunning runs needs
+  // actions: write from the caller rather than Actions access on the configured App.
+  const token = process.env.RERUN_TOKEN || process.env.LABEL_SYNC_TOKEN;
+  // The ignored-author status is also posted with the workflow's own GITHUB_TOKEN.
   const statusToken = process.env.GITHUB_TOKEN;
   const repository = process.env.TARGET_REPOSITORY;
   const pullRequestNumber = await readPullRequestNumber();

@@ -8,12 +8,12 @@
       "tokenSecretName": "LABEL_SYNC_TOKEN"
     },
     "githubApp": {
-      // This is the name of the secret that contains the GitHub App ID. You should create this secret in your repository and set its value to a valid GitHub App ID.
+      // The GitHub App's ID, from the App's settings page. It is not a secret. The installation is looked up from "organization", so the private key is the only secret needed.
+      "appId": null,
+      // Until appId is set, the App ID is still read from this secret. Set appId and delete the secret to finish moving to one secret.
       "appIdSecretName": "LABEL_SYNC_APP_ID",
-      // This is the name of the secret that contains the GitHub App private key. You should create this secret in your repository and set its value to the private key of your GitHub App.
-      "privateKeySecretName": "LABEL_SYNC_APP_PRIVATE_KEY",
-      // This is the name of the secret that contains the GitHub App installation ID. You should create this secret in your repository and set its value to the installation ID of your GitHub App.
-      "installationIdSecretName": "LABEL_SYNC_APP_INSTALLATION_ID"
+      // This is the name of the secret that contains the GitHub App private key. Create it as a repository secret in this repository.
+      "privateKeySecretName": "LABEL_SYNC_APP_PRIVATE_KEY"
     }
   },
   "sourceRepository": "Achrobat/Achrobat-Label-Sync"
