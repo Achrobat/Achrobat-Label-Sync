@@ -6,7 +6,7 @@
 //                     permission for this mode.
 // The configured source repository does not need to be listed here and is skipped even if listed.
 {
-  "filterMode": "blacklist",
+  "filterMode": "customProperty",
 
   "automaticSync": {
     // Automatic Org-Label-Sync runs once daily. To change the frequency, edit the schedule in
@@ -43,6 +43,7 @@
     "rules": [
       // ["Team", "whitelist", "Core", "Addons"],
       // ["Lifecycle", "blacklist", "Deprecated"]
+      ["Org-Management", "whitelist", "Managed PR Labels"]
     ]
   }
 }
