@@ -102,7 +102,7 @@
     // "blacklist": every discovered org repository except those listed in "blacklist".
     // "customProperty": repositories chosen by the rules in "customProperties". The Label Sync token needs the
     //                   organization "Custom properties" read permission for this mode.
-    "filterMode": "blacklist",
+    "filterMode": "customProperty",
 
     "whitelist": [
       // "sandbox-repo",
@@ -124,6 +124,8 @@
       "rules": [
         // ["Team", "whitelist", "Core", "Addons"],
         // ["Lifecycle", "blacklist", "Deprecated"]
+        ["DAXXL-Status", "whitelist", "Included"],
+        ["Upstream", "blacklist", "Active Upstream"]
       ]
     }
   }
