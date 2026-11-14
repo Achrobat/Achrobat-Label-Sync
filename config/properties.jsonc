@@ -9,7 +9,7 @@
     },
     "githubApp": {
       // The GitHub App's ID, from the App's settings page. It is not a secret. The installation is looked up from "organization", so the private key is the only secret needed.
-      "appId": null,
+      "appId": 5723905,
       // Until appId is set, the App ID is still read from this secret. Set appId and delete the secret to finish moving to one secret.
       "appIdSecretName": "LABEL_SYNC_APP_ID",
       // This is the name of the secret that contains the GitHub App private key. Create it as a repository secret in this repository.
