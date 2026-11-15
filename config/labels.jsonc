@@ -78,11 +78,6 @@
     "description": "Add something new. Please explain in detail how it works."
   },
   {
-    "name": "New Purple Label",
-    "color": "9c1bb4",
-    "description": ""
-  },
-  {
     "name": "Not Ready for Testing",
     "color": "a83303",
     "description": "PR should not be tested in Zeta (experimental) yet."
