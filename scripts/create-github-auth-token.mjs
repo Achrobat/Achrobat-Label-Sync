@@ -96,10 +96,10 @@ export async function getOrganizationInstallationId(jwt, organization, fetchImpl
   return String(installation.id);
 }
 
-async function createInstallationToken({ appId, privateKey, installationId, organization }) {
+async function createInstallationToken({ appId, privateKey, organization }) {
   const jwt = createAppJwt(appId, privateKey);
-  const resolvedInstallationId = installationId || await getOrganizationInstallationId(jwt, organization);
-  const response = await fetch(`https://api.github.com/app/installations/${resolvedInstallationId}/access_tokens`, {
+  const installationId = await getOrganizationInstallationId(jwt, organization);
+  const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: { ...GITHUB_HEADERS, Authorization: `Bearer ${jwt}` },
   });
@@ -118,15 +118,12 @@ async function createInstallationToken({ appId, privateKey, installationId, orga
   };
 }
 
-// Values passed in the environment (from secrets) win over config, so copies that still keep the App ID in a
-// secret keep working.
 export function resolveAppSettings(properties, env = process.env) {
   const configPath = "properties.authentication.githubApp";
 
   return {
-    appId: env.GITHUB_APP_ID || env.LABEL_SYNC_GITHUB_APP_ID || properties.authentication?.githubApp?.appId || "",
+    appId: properties.authentication?.githubApp?.appId || "",
     privateKey: env.GITHUB_APP_PRIVATE_KEY || env.LABEL_SYNC_GITHUB_APP_PRIVATE_KEY || "",
-    installationId: env.GITHUB_APP_INSTALLATION_ID || env.LABEL_SYNC_GITHUB_APP_INSTALLATION_ID || "",
     organization: properties.organization,
     configPath,
   };
@@ -153,12 +150,12 @@ async function main() {
   const properties = validateProperties(await readJsonc(path.join(process.cwd(), "config", "properties.jsonc")), {
     requireOrganization: true,
   });
-  const { appId, privateKey, installationId, organization, configPath } = resolveAppSettings(properties);
+  const { appId, privateKey, organization, configPath } = resolveAppSettings(properties);
 
   assert(appId, `Set ${configPath}.appId to the GitHub App's ID.`);
   assert(privateKey, `The GitHub App private key is missing or empty. Create the secret named in ${configPath}.privateKeySecretName.`);
 
-  const { token, permissions, login } = await createInstallationToken({ appId, privateKey, installationId, organization });
+  const { token, permissions, login } = await createInstallationToken({ appId, privateKey, organization });
   await outputToken(token, permissions, login);
 }
 

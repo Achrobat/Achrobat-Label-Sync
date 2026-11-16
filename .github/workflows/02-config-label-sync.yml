@@ -41,9 +41,7 @@ jobs:
         if: ${{ steps.properties.outputs.auth_mode == 'githubApp' }}
         env:
           AUTH_MODE: githubApp
-          GITHUB_APP_ID: ${{ secrets[steps.properties.outputs.github_app_id_secret_name] }}
           GITHUB_APP_PRIVATE_KEY: ${{ secrets[steps.properties.outputs.github_app_private_key_secret_name] }}
-          GITHUB_APP_INSTALLATION_ID: ${{ secrets[steps.properties.outputs.github_app_installation_id_secret_name] }}
         run: node scripts/create-github-auth-token.mjs
 
       - name: Sync current repo labels into config
