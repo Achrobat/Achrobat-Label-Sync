@@ -27,9 +27,7 @@ function validateSecretName(value, path) {
 function emptyAppAuthentication() {
   return {
     appId: "",
-    appIdSecretName: "",
     privateKeySecretName: "",
-    installationIdSecretName: "",
   };
 }
 
@@ -39,29 +37,27 @@ function validateAppId(value, path) {
   return text.trim();
 }
 
-// A GitHub App needs its ID and private key. The ID is public (it is in the App's own URL), so it can sit in
-// config as appId; appIdSecretName is still read for older copies. The installation is looked up from the
-// organization when installationIdSecretName is not set, so the private key is the only secret a copy needs.
+// The App ID is public and the installation is looked up from the organization, so the private key is the only
+// secret a copy needs.
 function validateAppAuthentication(app, path, { required }) {
   assert(app && typeof app === "object" && !Array.isArray(app), `${path} must be an object when provided.`);
+
+  assert(
+    app.appIdSecretName === undefined && app.installationIdSecretName === undefined,
+    `${path}.appIdSecretName and installationIdSecretName are no longer supported. Set ${path}.appId instead.`,
+  );
 
   const validated = emptyAppAuthentication();
 
   if (app.appId !== undefined && app.appId !== null && app.appId !== "") {
     validated.appId = validateAppId(app.appId, `${path}.appId`);
   }
-  if (app.appIdSecretName !== undefined) {
-    validated.appIdSecretName = validateSecretName(app.appIdSecretName, `${path}.appIdSecretName`);
-  }
   if (app.privateKeySecretName !== undefined) {
     validated.privateKeySecretName = validateSecretName(app.privateKeySecretName, `${path}.privateKeySecretName`);
   }
-  if (app.installationIdSecretName !== undefined) {
-    validated.installationIdSecretName = validateSecretName(app.installationIdSecretName, `${path}.installationIdSecretName`);
-  }
 
   if (required) {
-    assert(validated.appId || validated.appIdSecretName, `${path}.appId is required.`);
+    assert(validated.appId, `${path}.appId is required.`);
     assert(validated.privateKeySecretName, `${path}.privateKeySecretName must look like a GitHub secret name.`);
   }
 
@@ -154,9 +150,7 @@ export function validateProperties(properties, options = {}) {
     validated.authentication = authentication;
     validated.authMode = authentication.mode;
     validated.labelSyncTokenSecretName = authentication.pat.tokenSecretName;
-    validated.githubAppIdSecretName = authentication.githubApp.appIdSecretName;
     validated.githubAppPrivateKeySecretName = authentication.githubApp.privateKeySecretName;
-    validated.githubAppInstallationIdSecretName = authentication.githubApp.installationIdSecretName;
   }
 
   if (properties.sourceRepository !== undefined) {

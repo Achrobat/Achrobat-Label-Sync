@@ -216,9 +216,6 @@ A **GitHub App** is the more robust way to authenticate Label Sync. It lets the 
 
     That is the only secret. Set "mode": "githubApp" in config/properties.jsonc and you are finished.
 
-    Copies set up before appId existed may still have appIdSecretName and installationIdSecretName in
-    config. They keep working; replace them with appId and delete those two secrets when convenient.
-
 ---
 
 ## Label Test and the secret

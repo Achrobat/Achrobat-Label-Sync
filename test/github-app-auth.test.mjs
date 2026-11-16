@@ -14,23 +14,16 @@ test("a GitHub App needs only its ID in config and one private key secret", () =
   });
 
   assert.equal(properties.authentication.githubApp.appId, "12345");
-  assert.equal(properties.githubAppIdSecretName, "");
-  assert.equal(properties.githubAppInstallationIdSecretName, "");
   assert.equal(properties.githubAppPrivateKeySecretName, "ORG_MANAGER_APP_PRIVATE_KEY");
 });
 
-test("older copies that keep the App ID and installation in secrets still validate", () => {
-  const properties = appProperties({
-    mode: "githubApp",
-    githubApp: {
-      appIdSecretName: "LABEL_SYNC_APP_ID",
-      privateKeySecretName: "LABEL_SYNC_APP_PRIVATE_KEY",
-      installationIdSecretName: "LABEL_SYNC_APP_INSTALLATION_ID",
-    },
-  });
-
-  assert.equal(properties.githubAppIdSecretName, "LABEL_SYNC_APP_ID");
-  assert.equal(properties.githubAppInstallationIdSecretName, "LABEL_SYNC_APP_INSTALLATION_ID");
+test("App ID and installation ID secrets are rejected", () => {
+  for (const key of ["appIdSecretName", "installationIdSecretName"]) {
+    assert.throws(
+      () => appProperties({ mode: "githubApp", githubApp: { appId: 1, privateKeySecretName: "KEY", [key]: "OLD_SECRET" } }),
+      /no longer supported/,
+    );
+  }
 });
 
 test("githubApp mode rejects a missing App ID, a bad App ID, or a missing private key secret", () => {
@@ -39,18 +32,16 @@ test("githubApp mode rejects a missing App ID, a bad App ID, or a missing privat
   assert.throws(() => appProperties({ mode: "githubApp", githubApp: { appId: 1 } }), /privateKeySecretName/);
 });
 
-test("resolveAppSettings prefers secrets from the environment, then config", () => {
+test("resolveAppSettings takes the App ID from config and the key from the environment", () => {
   const properties = appProperties({ mode: "githubApp", githubApp: { appId: 1, privateKeySecretName: "MAIN_KEY" } });
 
   assert.deepEqual(resolveAppSettings(properties, { GITHUB_APP_PRIVATE_KEY: "pem" }), {
     appId: "1",
     privateKey: "pem",
-    installationId: "",
     organization: "Example",
     configPath: "properties.authentication.githubApp",
   });
-  assert.equal(resolveAppSettings(properties, { GITHUB_APP_ID: "9" }).appId, "9");
-  assert.equal(resolveAppSettings(properties, { GITHUB_APP_INSTALLATION_ID: "77" }).installationId, "77");
+  assert.equal(resolveAppSettings(properties, { GITHUB_APP_ID: "9" }).appId, "1");
 });
 
 test("the installation is looked up from the organization", async () => {
