@@ -71,6 +71,7 @@ Validation checks include:
 - Automatic sync setting types and label replacement syntax
 - Label Test workflow config shape
 - Label Test user and `teams/<slug>` approver, sticky label remover, and review request reviewer syntax
+- Label Test path label entries and globs
 - GitHub default label shape
 - Shared config used by `Org-Label-Sync` and `Remove-Labels`
 
