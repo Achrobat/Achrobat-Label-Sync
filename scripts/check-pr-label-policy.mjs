@@ -6,12 +6,14 @@ import {
   buildStickyLabelComment,
   describeReviewer,
   evaluatePrLabelTest,
+  findPathLabelsToAdd,
   findStickyLabelsToRestore,
   formatReviewRequest,
   formatReviewWithdrawal,
   formatStickyRestoration,
   isIgnoredPullRequestAuthor,
   planReviewRequests,
+  PULL_REQUEST_FILES_LIMIT,
 } from "./lib/label-test-workflow.mjs";
 
 const workspaceRoot = process.cwd();
@@ -75,6 +77,10 @@ async function getPullRequestIssueEvents(token, repository, pullRequestNumber) {
 
 async function addPullRequestLabels(token, repository, pullRequestNumber, labels) {
   return githubRequest(token, "POST", `/repos/${repository}/issues/${pullRequestNumber}/labels`, { labels });
+}
+
+async function getPullRequestFiles(token, repository, pullRequestNumber) {
+  return getAllPages(token, `/repos/${repository}/pulls/${pullRequestNumber}/files`);
 }
 
 async function getPullRequest(token, repository, pullRequestNumber) {
@@ -184,6 +190,45 @@ function readTriggeringLabelEvent() {
 
 function escapeWorkflowCommand(value) {
   return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+// Path labels are only checked when the PR's files can have changed, so a path label removed by hand stays
+// off until the next push. A failure here fails Label Test rather than letting a PR through unlabeled.
+const PATH_LABEL_ACTIONS = new Set(["opened", "synchronize", "reopened"]);
+
+async function applyPathLabels({ token, config, targetRepository, pullRequestNumber, pullRequestIssue, labels }) {
+  if (
+    config.pathLabels.length === 0
+    || !PATH_LABEL_ACTIONS.has(process.env.LABEL_EVENT_ACTION)
+    || isIgnoredPullRequestAuthor(config, pullRequestIssue?.user?.login)
+  ) {
+    return labels;
+  }
+
+  const present = new Set(labels.map((label) => normalizeName(label?.name ?? "")));
+
+  if (config.pathLabels.every((entry) => present.has(normalizeName(entry.label)))) {
+    return labels;
+  }
+
+  const changedFiles = await getPullRequestFiles(token, targetRepository, pullRequestNumber);
+  const filesTruncated = changedFiles.length >= PULL_REQUEST_FILES_LIMIT;
+  const toAdd = findPathLabelsToAdd({ config, prLabels: labels, changedFiles, filesTruncated });
+
+  if (toAdd.length === 0) {
+    return labels;
+  }
+
+  const updatedLabels = await addPullRequestLabels(token, targetRepository, pullRequestNumber, toAdd);
+  const reason = filesTruncated
+    ? `the pull request changes ${PULL_REQUEST_FILES_LIMIT} or more files, more than GitHub lists`
+    : "the pull request changes a matching path";
+
+  for (const label of toAdd) {
+    console.log(`::notice title=Path label added::${escapeWorkflowCommand(`Added "${label}" because ${reason}.`)}`);
+  }
+
+  return Array.isArray(updatedLabels) ? updatedLabels : labels;
 }
 
 // Re-applies sticky labels that were removed by someone who is not a configured remover or the Label
@@ -414,13 +459,21 @@ async function main() {
   const isTeamMember = createTeamMembershipChecker(token, properties.organization);
   const isAutomationActor = createAutomationActorChecker(token);
   const loadIssueEvents = createIssueEventsLoader(token, targetRepository, pullRequestNumber);
-  const labels = await restoreStickyLabels({
+  const pathLabeled = await applyPathLabels({
     token,
     config,
     targetRepository,
     pullRequestNumber,
     pullRequestIssue,
     labels: Array.isArray(pullRequestIssue.labels) ? pullRequestIssue.labels : [],
+  });
+  const labels = await restoreStickyLabels({
+    token,
+    config,
+    targetRepository,
+    pullRequestNumber,
+    pullRequestIssue,
+    labels: pathLabeled,
     isTeamMember,
     isAutomationActor,
     loadIssueEvents,

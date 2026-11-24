@@ -56,6 +56,15 @@
     { "label": "Requires Admin", "approver": "teams/Admin" }
   ],
 
+  // Path labels are added to a PR that changes a file matching one of the globs. They are checked when the PR
+  // is opened, reopened or pushed to, and are never removed automatically. A path label removed by hand comes
+  // back on the next matching push; list it in stickyLabels as well to keep it on between pushes. Globs are
+  // relative to the repository root and case-sensitive: "**/assets/**" matches an assets folder anywhere.
+  // Renamed files also match on their old path. A PR with 3000 or more changed files gets every path label.
+  "pathLabels": [
+    // { "label": "Asset Change", "paths": ["**/assets/**"] }
+  ],
+
   // Sticky labels stay on a PR once applied. If anyone other than a listed remover (user, team member, or
   // GitHub App bot login such as "my-app[bot]") takes one off, Label Test puts it straight back.
   // Combine with protectedLabelApprovals so the label cannot be removed to skip a required approval.

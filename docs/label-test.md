@@ -26,6 +26,9 @@ The rules live only in `config/label-test-workflow-config.jsonc` in this reposit
   "protectedLabelApprovals": [
     // { "label": "Affects Balance", "approver": "teams/admin, UltraProdigy" }
   ],
+  "pathLabels": [
+    // { "label": "Asset Change", "paths": ["**/assets/**"] }
+  ],
   "stickyLabels": [
     // { "label": "Affects Balance", "remover": "teams/admin, UltraProdigy" }
   ],
@@ -59,6 +62,23 @@ Behavior:
 - Plain approvers such as `UltraProdigy` are GitHub users.
 - Approvers prefixed with `teams/`, such as `teams/admin`, are GitHub team slugs in the configured organization.
 - One entry can list several approvers separated by commas, such as `"approver": "teams/admin, UltraProdigy"`; an array of names also works. Any one of them can approve. Separate entries per approver still work.
+
+## Path labels
+
+`pathLabels` adds a label to a pull request that changes a file matching one of the entry's globs. Label Test checks when the pull request is opened, reopened or pushed to, adds any matching label before evaluating the policy, and adds a `Path label added` notice to the run. The added label counts toward required, failing and protected-approval rules in the same run.
+
+```jsonc
+"pathLabels": [
+  { "label": "Asset Change", "paths": ["**/assets/**"] }
+]
+```
+
+- `paths` takes one glob or a list. Globs are relative to the repository root and case-sensitive. `**` matches any number of folders, so `**/assets/**` matches `assets/` and `src/main/resources/assets/` alike; `*` stays within one folder.
+- A renamed file matches on its old path as well as its new one, so moving files out of a matched folder still adds the label. Deleted files match too.
+- Path labels are only added, never removed. A path label removed by hand stays off until the next push that still matches. To keep it on between pushes, also list it in `stickyLabels`.
+- GitHub lists at most 3000 changed files for a pull request. A pull request at that limit gets every path label it is missing, since the unlisted files could match.
+- Pull requests opened by an `ignoredPullRequestAuthors` login are skipped. Pull requests opened before a path label was configured are checked on their next push.
+- Listing files and adding labels use the configured PAT or GitHub App token, the same access sticky labels need. If either call fails, Label Test fails.
 
 ## Sticky labels
 

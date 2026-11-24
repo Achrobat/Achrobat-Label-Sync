@@ -703,6 +703,52 @@ function validateReviewRequests(entries) {
   });
 }
 
+// Path labels are added to a PR when it changes a file matching one of the globs. Globs are relative to
+// the repository root.
+function validatePathLabels(entries) {
+  const configKey = "pathLabels";
+  assert(
+    Array.isArray(entries),
+    `config/label-test-workflow-config.jsonc field "${configKey}" must contain an array.`,
+  );
+
+  const seen = new Set();
+
+  return entries.map((entry, index) => {
+    assert(
+      entry && typeof entry === "object" && !Array.isArray(entry),
+      `${configKey} entry at index ${index} must be an object.`,
+    );
+    assert(
+      typeof entry.label === "string" && entry.label.trim(),
+      `${configKey} entry at index ${index} must include a non-empty label.`,
+    );
+
+    const label = entry.label.trim();
+    const key = normalizeName(label);
+    assert(!seen.has(key), `Duplicate ${configKey} entry detected: "${label}". List all of its paths in one entry.`);
+    seen.add(key);
+
+    const values = Array.isArray(entry.paths) ? entry.paths : [entry.paths];
+    assert(values.length > 0, `${configKey} entry "${label}" must include at least one path.`);
+
+    const paths = values.map((value) => {
+      assert(
+        typeof value === "string" && value.trim(),
+        `${configKey} entry "${label}" paths must be non-empty strings.`,
+      );
+      const glob = value.trim();
+      assert(
+        !glob.startsWith("/") && !glob.includes("\\"),
+        `${configKey} entry "${label}" path "${glob}" must be relative to the repository root and use "/".`,
+      );
+      return glob;
+    });
+
+    return { label, paths: [...new Set(paths)] };
+  });
+}
+
 function validateStickyLabelComment(value) {
   assert(
     typeof value === "boolean",
@@ -737,6 +783,7 @@ export function validateLabelTestWorkflowConfig(labelTestWorkflowConfig) {
     stickyLabels,
     stickyLabelComment: validateStickyLabelComment(labelTestWorkflowConfig.stickyLabelComment ?? false),
     reviewRequests: validateReviewRequests(labelTestWorkflowConfig.reviewRequests ?? []),
+    pathLabels: validatePathLabels(labelTestWorkflowConfig.pathLabels ?? []),
     // Defaults to whitelist so a config without "filterMode" distributes to no repositories until some are listed.
     workflowDistribution: validateRepositorySelection(workflowDistribution, {
       configPath: "config/label-test-workflow-config.jsonc",

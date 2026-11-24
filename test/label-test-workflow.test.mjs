@@ -5,6 +5,7 @@ import {
   buildStickyLabelComment,
   collapseLatestReviewStates,
   evaluatePrLabelTest,
+  findPathLabelsToAdd,
   findStickyLabelsToRestore,
   formatReviewRequest,
   formatReviewWithdrawal,
@@ -864,4 +865,60 @@ test("planReviewRequests treats approvers as lacking write access when no checke
   });
 
   assert.deepEqual(plan.request, []);
+});
+
+const pathLabelConfig = {
+  ...emptyConfig,
+  pathLabels: [
+    { label: "Asset Change", paths: ["**/assets/**"] },
+    { label: "Docs", paths: ["docs/**", "*.md"] },
+  ],
+};
+
+test("findPathLabelsToAdd adds labels whose globs match a changed file", () => {
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [],
+    changedFiles: [
+      { filename: "src/main/resources/assets/gregtech/textures/block.png" },
+      { filename: "src/main/java/Foo.java" },
+    ],
+  }), ["Asset Change"]);
+
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [],
+    changedFiles: [{ filename: "assets/lang/en_US.lang" }, { filename: "CHANGELOG.md" }],
+  }), ["Asset Change", "Docs"]);
+});
+
+test("findPathLabelsToAdd ignores near misses and labels already on the PR", () => {
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [],
+    changedFiles: [{ filename: "src/myassets/x.png" }, { filename: "src/Assets/x.png" }, { filename: "a/README.md" }],
+  }), []);
+
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [{ name: "asset change" }],
+    changedFiles: [{ filename: "src/main/resources/assets/x.png" }],
+  }), []);
+});
+
+test("findPathLabelsToAdd matches the old path of a renamed file", () => {
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [],
+    changedFiles: [{ filename: "src/main/resources/x.png", previous_filename: "src/main/resources/assets/x.png" }],
+  }), ["Asset Change"]);
+});
+
+test("findPathLabelsToAdd adds every missing path label when the file list is truncated", () => {
+  assert.deepEqual(findPathLabelsToAdd({
+    config: pathLabelConfig,
+    prLabels: [{ name: "Docs" }],
+    changedFiles: [{ filename: "src/main/java/Foo.java" }],
+    filesTruncated: true,
+  }), ["Asset Change"]);
 });

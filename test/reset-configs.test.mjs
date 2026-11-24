@@ -63,6 +63,7 @@ test("reset-configs can reset label-test-workflow-config.jsonc", async () => {
       ignoredPullRequestAuthors: [],
       repositoryLabels: {},
       protectedLabelApprovals: [],
+      pathLabels: [],
       stickyLabels: [],
       stickyLabelComment: false,
       reviewRequests: [],

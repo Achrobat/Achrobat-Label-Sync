@@ -1,3 +1,4 @@
+import path from "node:path";
 import { normalizeName, normalizeRepositoryRef } from "./config-utils.mjs";
 
 function labelNames(labels) {
@@ -162,6 +163,28 @@ async function isAuthorizedMember(members, login, isTeamMember) {
   }
 
   return false;
+}
+
+// GitHub lists at most this many changed files for a pull request.
+export const PULL_REQUEST_FILES_LIMIT = 3000;
+
+// Returns the path labels a PR should gain. Renamed files match on their old path as well, so moving a
+// file out of a matched folder still counts. If the file list was cut off, every missing path label is
+// returned, because the unseen files could match.
+export function findPathLabelsToAdd({ config, prLabels, changedFiles, filesTruncated = false }) {
+  const present = labelNames(prLabels);
+  const missing = (config.pathLabels ?? []).filter((entry) => !present.has(normalizeName(entry.label)));
+
+  if (missing.length === 0 || filesTruncated) {
+    return missing.map((entry) => entry.label);
+  }
+
+  const filePaths = changedFiles.flatMap((file) => [file?.filename, file?.previous_filename])
+    .filter((filePath) => typeof filePath === "string" && filePath);
+
+  return missing
+    .filter((entry) => filePaths.some((filePath) => entry.paths.some((glob) => path.posix.matchesGlob(filePath, glob))))
+    .map((entry) => entry.label);
 }
 
 // Finds sticky labels that are missing from the pull request because someone who is not a configured

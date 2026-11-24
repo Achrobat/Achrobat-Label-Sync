@@ -345,3 +345,51 @@ test("validateLabelTestWorkflowConfig rejects empty or duplicate members in a li
     /stickyLabels user remover "org\/admin" must not contain "\/"\./,
   );
 });
+
+test("validateLabelTestWorkflowConfig accepts path labels and defaults them to an empty list", () => {
+  assert.deepEqual(validateLabelTestWorkflowConfig({}).pathLabels, []);
+
+  const config = validateLabelTestWorkflowConfig({
+    pathLabels: [
+      { label: " Asset Change ", paths: ["**/assets/**", " **/assets/** ", "resourcepacks/**"] },
+      { label: "Docs", paths: "docs/**" },
+    ],
+  });
+
+  assert.deepEqual(config.pathLabels, [
+    { label: "Asset Change", paths: ["**/assets/**", "resourcepacks/**"] },
+    { label: "Docs", paths: ["docs/**"] },
+  ]);
+});
+
+test("validateLabelTestWorkflowConfig rejects invalid path labels", () => {
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ pathLabels: {} }),
+    /field "pathLabels" must contain an array\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ pathLabels: [{ paths: ["**/assets/**"] }] }),
+    /pathLabels entry at index 0 must include a non-empty label\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ pathLabels: [{ label: "Asset Change", paths: [] }] }),
+    /pathLabels entry "Asset Change" must include at least one path\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ pathLabels: [{ label: "Asset Change" }] }),
+    /pathLabels entry "Asset Change" paths must be non-empty strings\./,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({ pathLabels: [{ label: "Asset Change", paths: ["/assets/**"] }] }),
+    /path "\/assets\/\*\*" must be relative to the repository root/,
+  );
+  assert.throws(
+    () => validateLabelTestWorkflowConfig({
+      pathLabels: [
+        { label: "Asset Change", paths: ["**/assets/**"] },
+        { label: "asset change", paths: ["textures/**"] },
+      ],
+    }),
+    /Duplicate pathLabels entry detected: "asset change"\./,
+  );
+});
